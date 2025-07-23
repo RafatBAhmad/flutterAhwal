@@ -5,7 +5,9 @@ import 'dart:io'; // For SocketException
 import 'dart:async'; // For TimeoutException
 
 class ApiService {
-  static const String baseUrl = 'https://ahwal-checkpoints-api.onrender.com/api/v1/checkpoints';
+  // static const String baseUrl = 'https://ahwal-checkpoints-api.onrender.com/api/v1/checkpoints';
+  static const String baseUrl = 'http://192.168.1.101:8081/api/v1/checkpoints';
+
   static const Duration timeoutDuration = Duration(seconds: 10); // Define a timeout duration
 
   // Helper function to handle API calls and errors
