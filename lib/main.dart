@@ -1,4 +1,5 @@
-
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -8,23 +9,46 @@ import 'package:vibration/vibration.dart';
 import 'screens/home_screen.dart';
 import 'screens/city_filter_screen.dart';
 import 'screens/map_screen.dart';
+import 'screens/settings_screen.dart';
 import 'services/api_service.dart';
 import 'models/checkpoint.dart';
+
+
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
 Future<void> showNotification(String title, String body) async {
+  if (kIsWeb) {
+    debugPrint('Notifications not supported on web');
+    return;
+  }
+
+  // التحقق من إمكانية الاهتزاز
+  bool? hasVibrator = await Vibration.hasVibrator();
+  if (hasVibrator ?? false) {
+    Vibration.vibrate(duration: 500);
+  }
+
   const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
     'checkpoint_channel',
     'Checkpoint Updates',
+    channelDescription: 'تنبيهات تحديث حالة الحواجز',
     importance: Importance.max,
     priority: Priority.high,
+    styleInformation: BigTextStyleInformation(''),
+    enableVibration: true,
+    playSound: true,
   );
   const NotificationDetails platformDetails = NotificationDetails(android: androidDetails);
   await flutterLocalNotificationsPlugin.show(0, title, body, platformDetails);
 }
 
 Future<void> initializeService() async {
+  if (kIsWeb) {
+    debugPrint('Background service not supported on web');
+    return;
+  }
+
   final service = FlutterBackgroundService();
 
   await service.configure(
@@ -32,55 +56,162 @@ Future<void> initializeService() async {
       onStart: onStart,
       autoStart: true,
       isForegroundMode: false,
+      autoStartOnBoot: true,
     ),
-    iosConfiguration: IosConfiguration(),
+    iosConfiguration: IosConfiguration(
+      autoStart: true,
+      onForeground: onStart,
+      onBackground: onIosBackground,
+    ),
   );
 
   service.startService();
 }
 
 @pragma('vm:entry-point')
+Future<bool> onIosBackground(ServiceInstance service) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await _checkForUpdates();
+  return true;
+}
+
+@pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
-  final prefs = await SharedPreferences.getInstance();
-  final favoriteIds = prefs.getStringList('favorites')?.toSet() ?? {};
-  final notificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
+  WidgetsFlutterBinding.ensureInitialized(); // ضروري لضمان تهيئة SharedPreferences
 
-  if (!notificationsEnabled || favoriteIds.isEmpty) return;
-
-  final allCheckpoints = await ApiService.getAllCheckpoints();
-  final Map<String, String> lastStatuses = Map<String, String>.from(
-    prefs.getString('last_statuses') != null
-        ? Map<String, dynamic>.from(Uri.splitQueryString(prefs.getString('last_statuses')!))
-        : {},
-  );
-
-  for (final cp in allCheckpoints) {
-    if (favoriteIds.contains(cp.id)) {
-      final prev = lastStatuses[cp.id];
-      if (prev != null && prev != cp.status) {
-        await showNotification("📢 تحديث حالة حاجز", "${cp.name} أصبح ${cp.status}");
-      }
-      lastStatuses[cp.id] = cp.status;
-    }
+  if (service is AndroidServiceInstance) {
+    service.on('setAsForeground').listen((event) {
+      service.setAsForegroundService();
+    });
+    service.on('setAsBackground').listen((event) {
+      service.setAsBackgroundService();
+    });
   }
 
-  prefs.setString(
-    'last_statuses',
-    lastStatuses.entries.map((e) => "${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}").join("&"),
-  );
+  service.on('stopService').listen((event) {
+    service.stopSelf();
+  });
+
+  // تحقق من التحديثات كل 10 دقائق
+  Timer.periodic(const Duration(minutes: 10), (timer) async {
+    final prefs = await SharedPreferences.getInstance();
+    final notificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
+    if (notificationsEnabled) {
+      await _checkForUpdates();
+    }
+  });
+}
+
+Future<void> _checkForUpdates() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final favoriteIds = prefs.getStringList('favorites')?.toSet() ?? {};
+
+    if (favoriteIds.isEmpty) return;
+
+    final allCheckpoints = await ApiService.getAllCheckpoints();
+    final Map<String, String> lastStatuses = Map<String, String>.from(
+      prefs.getString('last_statuses') != null
+          ? _parseQueryString(prefs.getString('last_statuses')!)
+          : {},
+    );
+
+    bool hasChanges = false;
+    final List<String> changedCheckpoints = [];
+
+    for (final cp in allCheckpoints) {
+      if (favoriteIds.contains(cp.id)) {
+        final prev = lastStatuses[cp.id];
+        if (prev != null && prev != cp.status) {
+          await showNotification(
+              "📢 تحديث حالة حاجز مفضل",
+              "${cp.name} أصبح ${cp.status}"
+          );
+          changedCheckpoints.add("${cp.name}: ${cp.status}");
+          hasChanges = true;
+        }
+        lastStatuses[cp.id] = cp.status;
+      }
+    }
+
+    if (hasChanges) {
+      prefs.setString('last_update_time', DateTime.now().toIso8601String());
+      prefs.setStringList('recent_changes', changedCheckpoints);
+    }
+
+    prefs.setString('last_statuses', _buildQueryString(lastStatuses));
+  } catch (e) {
+    debugPrint('Error checking updates: $e');
+  }
+}
+
+Map<String, String> _parseQueryString(String query) {
+  final result = <String, String>{};
+  final pairs = query.split('&');
+  for (final pair in pairs) {
+    final keyValue = pair.split('=');
+    if (keyValue.length == 2) {
+      result[Uri.decodeComponent(keyValue[0])] = Uri.decodeComponent(keyValue[1]);
+    }
+  }
+  return result;
+}
+
+String _buildQueryString(Map<String, String> params) {
+  return params.entries
+      .map((e) => "${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}")
+      .join("&");
 }
 
 void main() async {
+  // تأكد من تهيئة كل شيء قبل تشغيل التطبيق
   WidgetsFlutterBinding.ensureInitialized();
 
-  const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const InitializationSettings initializationSettings = InitializationSettings(android: initializationSettingsAndroid);
-  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+  // إذا كان التطبيق يعمل على الويب، لا تقم بتهيئة الخدمات
+  if (kIsWeb) {
+    debugPrint('🌐 Running on web - skipping platform-specific features');
+  } else {
+    // تهيئة التنبيهات والخدمات للمنصات الأخرى
+    try {
+      const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
 
-  await initializeService();
+      const DarwinInitializationSettings initializationSettingsIOS =
+      DarwinInitializationSettings(
+        requestAlertPermission: true,
+        requestBadgePermission: true,
+        requestSoundPermission: true,
+      );
 
+      const InitializationSettings initializationSettings = InitializationSettings(
+        android: initializationSettingsAndroid,
+        iOS: initializationSettingsIOS,
+      );
+
+      await flutterLocalNotificationsPlugin.initialize(
+        initializationSettings,
+        onDidReceiveNotificationResponse: (NotificationResponse response) async {
+          debugPrint('Notification tapped: ${response.payload}');
+        },
+      );
+
+      // طلب الأذونات على iOS
+      await flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
+          ?.requestPermissions(alert: true, badge: true, sound: true);
+
+      // بدء الخدمة في الخلفية
+      await initializeService();
+      debugPrint('✅ Platform-specific features initialized');
+    } catch (e) {
+      debugPrint('❌ Error during initialization: $e');
+    }
+  }
+
+  // الآن قم بتشغيل التطبيق
   runApp(const AhwalApp());
 }
+
 
 class AhwalApp extends StatefulWidget {
   const AhwalApp({super.key});
@@ -92,21 +223,83 @@ class AhwalApp extends StatefulWidget {
 class _AhwalAppState extends State<AhwalApp> {
   ThemeMode _themeMode = ThemeMode.system;
 
-  void toggleTheme() {
+  @override
+  void initState() {
+    super.initState();
+    _loadThemeMode();
+  }
+
+  Future<void> _loadThemeMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    final themeModeIndex = prefs.getInt('theme_mode') ?? 0;
+    if (mounted) {
+      setState(() {
+        _themeMode = ThemeMode.values[themeModeIndex];
+      });
+    }
+  }
+
+  Future<void> toggleTheme() async {
+    final newThemeMode = _themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
     setState(() {
-      _themeMode = _themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
+      _themeMode = newThemeMode;
     });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('theme_mode', newThemeMode.index);
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'أحوال الطرق',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.blue,
         fontFamily: 'Cairo',
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.blue,
+          brightness: Brightness.light,
+        ),
+        appBarTheme: const AppBarTheme(
+          elevation: 2,
+          centerTitle: true,
+          titleTextStyle: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        cardTheme: CardThemeData(
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
       ),
-      darkTheme: ThemeData.dark(),
+      darkTheme: ThemeData(
+        primarySwatch: Colors.blue,
+        fontFamily: 'Cairo',
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.blue,
+          brightness: Brightness.dark,
+        ),
+        appBarTheme: const AppBarTheme(
+          elevation: 2,
+          centerTitle: true,
+          titleTextStyle: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        cardTheme: CardThemeData(
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
       themeMode: _themeMode,
       home: MainNavigationScreen(toggleTheme: toggleTheme, themeMode: _themeMode),
     );
@@ -123,60 +316,158 @@ class MainNavigationScreen extends StatefulWidget {
   State<MainNavigationScreen> createState() => _MainNavigationScreenState();
 }
 
-class _MainNavigationScreenState extends State<MainNavigationScreen> {
+class _MainNavigationScreenState extends State<MainNavigationScreen>
+    with TickerProviderStateMixin {
   int currentIndex = 0;
-
   late final List<Widget> screens;
+  late AnimationController _animationController;
+  late Animation<double> _animation;
 
   @override
   void initState() {
     super.initState();
+
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+
+    _animation = CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeInOut,
+    );
+
     screens = [
       HomeScreen(toggleTheme: widget.toggleTheme, themeMode: widget.themeMode),
       const CityFilterScreen(),
       const MapScreen(),
+      // SettingsScreen تم إزالتها من هنا
     ];
+
+    _animationController.forward();
   }
 
-  final List<String> titles = [
-    'أحوال الطرق',
-    'فلترة حسب المدينة',
-    'الخريطة',
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  final List<NavigationItem> navigationItems = [
+    NavigationItem(icon: Icons.home_outlined, activeIcon: Icons.home, label: 'الرئيسية', title: 'أحوال الطرق'),
+    NavigationItem(icon: Icons.filter_list_outlined, activeIcon: Icons.filter_list, label: 'الفلترة', title: 'فلترة حسب المدينة'),
+    NavigationItem(icon: Icons.map_outlined, activeIcon: Icons.map, label: 'الخريطة', title: 'خريطة الحواجز'),
+    // NavigationItem(icon: Icons.settings_outlined, activeIcon: Icons.settings, label: 'الإعدادات', title: 'الإعدادات'), // تم إزالتها من هنا
   ];
+
+  void _onTabTapped(int index) {
+    if (index != currentIndex) {
+      _animationController.reset();
+      setState(() => currentIndex = index);
+      _animationController.forward();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(titles[currentIndex]),
+        title: Text(navigationItems[currentIndex].title),
         actions: [
+          // زر الإعدادات الجديد
           IconButton(
-            icon: Icon(widget.themeMode == ThemeMode.dark ? Icons.wb_sunny : Icons.nightlight_round),
-            onPressed: widget.toggleTheme,
+            icon: const Icon(Icons.settings),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SettingsScreen()),
+              );
+            },
+            tooltip: 'الإعدادات',
           ),
+          IconButton(
+            icon: Icon(widget.themeMode == ThemeMode.dark ? Icons.wb_sunny_outlined : Icons.nightlight_round),
+            onPressed: widget.toggleTheme,
+            tooltip: widget.themeMode == ThemeMode.dark ? 'الوضع النهاري' : 'الوضع الليلي',
+          ),
+          if (currentIndex != 3) // هذا الشرط لم يعد ضرورياً بعد إزالة الإعدادات من الشريط السفلي
+            IconButton(
+              icon: const Icon(Icons.info_outline),
+              onPressed: () => _showAppInfo(context),
+              tooltip: 'معلومات التطبيق',
+            ),
         ],
       ),
-      body: screens[currentIndex],
+      body: FadeTransition(
+        opacity: _animation,
+        child: screens[currentIndex],
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: currentIndex,
-        selectedItemColor: Colors.blue,
+        onTap: _onTabTapped,
+        type: BottomNavigationBarType.fixed,
+        selectedItemColor: Theme.of(context).colorScheme.primary,
         unselectedItemColor: Colors.grey,
-        onTap: (index) => setState(() => currentIndex = index),
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.list),
-            label: 'الرئيسية',
+        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600),
+        items: navigationItems.map((item) {
+          final isSelected = navigationItems.indexOf(item) == currentIndex;
+          return BottomNavigationBarItem(
+            icon: Icon(isSelected ? item.activeIcon : item.icon),
+            label: item.label,
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  void _showAppInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('معلومات التطبيق'),
+        content: const SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('تطبيق أحوال الطرق', style: TextStyle(fontWeight: FontWeight.bold)),
+              SizedBox(height: 8),
+              Text('الإصدار: 1.0.0'),
+              SizedBox(height: 8),
+              Text('تطبيق لمتابعة حالة الحواجز والطرق في الوقت الفعلي.'),
+              SizedBox(height: 12),
+              Text('المميزات:', style: TextStyle(fontWeight: FontWeight.bold)),
+              SizedBox(height: 4),
+              Text('• تحديث تلقائي دوري'),
+              Text('• إشعارات للحواجز المفضلة'),
+              Text('• فلترة حسب المدينة'),
+              Text('• وضع ليلي ونهاري'),
+            ],
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.filter_list),
-            label: 'الفلترة',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.map),
-            label: 'الخريطة',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إغلاق'),
           ),
         ],
       ),
     );
   }
 }
+
+class NavigationItem {
+  final IconData icon;
+  final IconData activeIcon;
+  final String label;
+  final String title;
+
+  NavigationItem({
+    required this.icon,
+    required this.activeIcon,
+    required this.label,
+    required this.title,
+  });
+}
+
+

@@ -3,10 +3,11 @@ import 'package:http/http.dart' as http;
 import '../models/checkpoint.dart';
 import 'dart:io'; // For SocketException
 import 'dart:async'; // For TimeoutException
+import '../models/city_summary.dart';
 
 class ApiService {
   // static const String baseUrl = 'https://ahwal-checkpoints-api.onrender.com/api/v1/checkpoints';
-  static const String baseUrl = 'http://192.168.1.101:8081/api/v1/checkpoints';
+  static const String baseUrl = 'http://192.168.1.103:8081/api/v1/checkpoints';
 
   static const Duration timeoutDuration = Duration(seconds: 10); // Define a timeout duration
 
@@ -43,6 +44,29 @@ class ApiService {
   // لجلب الحواجز حسب المدينة
   static Future<List<Checkpoint>> getCheckpointsByCity(String city) async {
     return _fetchCheckpoints(Uri.parse('$baseUrl/by-city?city=$city'));
+  }
+
+  static Future<List<CitySummary>> getCitySummaries() async {
+    const summaryUrl = 'http://192.168.1.103:8081/api/v1/summary/cities';
+
+    try {
+      final response = await http.get(Uri.parse(summaryUrl)).timeout(timeoutDuration);
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> json = jsonDecode(response.body);
+        return json.entries
+            .map((entry) => CitySummary.fromJson(entry.key, entry.value))
+            .toList();
+      } else {
+        throw Exception('فشل في تحميل تلخيص المدن: ${response.statusCode}');
+      }
+    } on SocketException {
+      throw Exception('لا يوجد اتصال بالإنترنت.');
+    } on TimeoutException {
+      throw Exception('انتهت مهلة الاتصال بالخادم.');
+    } catch (e) {
+      throw Exception('خطأ أثناء تحميل التلخيص: $e');
+    }
   }
 }
 

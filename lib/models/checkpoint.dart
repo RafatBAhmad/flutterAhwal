@@ -8,6 +8,7 @@ class Checkpoint {
   final double longitude;
   final String status;
   final String? updatedAt;
+  final String? effectiveAt;
   final String sourceText;
 
   Checkpoint({
@@ -18,6 +19,7 @@ class Checkpoint {
     required this.longitude,
     required this.status,
     required this.updatedAt,
+    required this.effectiveAt,
     required this.sourceText,
   });
 
@@ -30,18 +32,20 @@ class Checkpoint {
       longitude: (json['longitude'] ?? 0).toDouble(),
       status: json['status'],
       updatedAt: json['updatedAt'],
+      effectiveAt: json['effectiveAt'],
       sourceText: json['sourceText'] ?? '',
     );
   }
 
   /// ✅ التاريخ بشكل مقروء
   String get formattedDate {
-    if (updatedAt == null) return 'غير معروف';
+    final rawDate = effectiveAt ?? updatedAt;
+    if (rawDate == null) return 'غير معروف';
     try {
-      final dt = DateTime.parse(updatedAt!);
+      final dt = DateTime.parse(rawDate).toLocal();
       return DateFormat('yyyy/MM/dd hh:mm a', 'ar').format(dt);
     } catch (e) {
-      return updatedAt!;
+      return rawDate!;
     }
   }
 
@@ -49,6 +53,22 @@ class Checkpoint {
   DateTime? get updatedAtDateTime {
     try {
       return updatedAt != null ? DateTime.parse(updatedAt!) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  DateTime? get effectiveAtDateTime {
+    try {
+      return effectiveAt != null ? DateTime.parse(effectiveAt!).toLocal() : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  DateTime? get effectiveDateTime {
+    try {
+      return effectiveAt != null ? DateTime.parse(effectiveAt!).toLocal() : null;
     } catch (e) {
       return null;
     }
