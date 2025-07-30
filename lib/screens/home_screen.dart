@@ -1,13 +1,15 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:vibration/vibration.dart';
 import '../models/checkpoint.dart';
 import '../services/api_service.dart';
-import '../utils/date_utils.dart';
-import '../widgets/checkpoint_card.dart'; // إضافة الاستيراد الجديد
+import '../services/cache_service.dart';
+import '../services/share_service.dart';
+import '../widgets/checkpoint_card.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback toggleTheme;
@@ -24,6 +26,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  // المتغيرات الأساسية
   List<Checkpoint> allCheckpoints = [];
   List<String> cities = [];
   Set<String> favoriteIds = {};
@@ -31,28 +34,56 @@ class _HomeScreenState extends State<HomeScreen> {
   String selectedCity = "الكل";
   Timer? _refreshTimer;
   bool notificationsEnabled = true;
+
+  // متغيرات الإشعارات
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
   FlutterLocalNotificationsPlugin();
   String notificationStatusMessage = "";
+
+  // متغيرات التمرير والقراءة
   final ScrollController _scrollController = ScrollController();
   int newItemsCount = 0;
   List<Checkpoint> lastDisplayed = [];
+  int? _lastReadIndex;
   int lastReadIndex = 0;
+  int _newMessagesCount = 0;
+  bool _isLoading = true;
+  bool _showScrollToTop = false;
+
+  // متغيرات البحث والفلترة
   bool _isAutoRefreshEnabled = true;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = "";
   bool _showOnlyFavorites = false;
+  List<String>? _quickStatusFilter;
 
   @override
   void initState() {
     super.initState();
+
+    CacheService.updateUsageStats();
+
     initNotifications();
     loadFavorites();
     loadNotificationSetting();
     loadLastReadIndex();
+    _loadLastReadIndex();
     loadAutoRefreshSetting();
     fetchCheckpoints();
     startAutoRefresh();
+
+    _scrollController.addListener(_scrollListener);
+  }
+
+  void _scrollListener() {
+    if (_scrollController.hasClients) {
+      final showButton = _scrollController.offset > 200;
+      if (showButton != _showScrollToTop) {
+        setState(() {
+          _showScrollToTop = showButton;
+        });
+      }
+    }
   }
 
   void initNotifications() async {
@@ -97,7 +128,6 @@ class _HomeScreenState extends State<HomeScreen> {
       prefs.setStringList('favorites', favoriteIds.toList());
     });
 
-    // إضافة تنبيه للمستخدم
     final checkpoint = allCheckpoints.firstWhere((cp) => cp.id == id);
     final action = favoriteIds.contains(id) ? "أُضيف إلى" : "أُزيل من";
     Fluttertoast.showToast(
@@ -142,9 +172,41 @@ class _HomeScreenState extends State<HomeScreen> {
     lastReadIndex = prefs.getInt('lastReadMessageIndex') ?? 0;
   }
 
+  Future<void> _loadLastReadIndex() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _lastReadIndex = prefs.getInt('lastReadIndex');
+    });
+  }
+
+  Future<void> _saveLastReadIndex(int index) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('lastReadIndex', index);
+  }
+
+  void _calculateNewMessages() {
+    final displayed = getFilteredCheckpoints();
+    if (_lastReadIndex == null) {
+      _newMessagesCount = displayed.length;
+    } else {
+      _newMessagesCount = displayed.length - _lastReadIndex! - 1;
+      if (_newMessagesCount < 0) _newMessagesCount = 0;
+    }
+  }
+
+  void _markAsRead(int index) {
+    _saveLastReadIndex(index);
+    setState(() {
+      _lastReadIndex = index;
+      _calculateNewMessages();
+      _newMessagesCount = 0;
+    });
+  }
+
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _scrollController.removeListener(_scrollListener);
     _scrollController.dispose();
     _searchController.dispose();
     super.dispose();
@@ -152,7 +214,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void startAutoRefresh() {
     if (!_isAutoRefreshEnabled) return;
-
     _refreshTimer?.cancel();
     _refreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
       if (_isAutoRefreshEnabled) {
@@ -162,22 +223,32 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> fetchCheckpoints({bool showToast = true}) async {
+    setState(() => _isLoading = true);
+
     try {
-      final data = await ApiService.getAllCheckpoints();
+      var data = await CacheService.getCachedCheckpoints();
+
+      if (data == null) {
+        data = await ApiService.getAllCheckpoints();
+        await CacheService.cacheCheckpoints(data);
+      }
+
       detectChanges(data);
 
       setState(() {
-        allCheckpoints = data;
+        allCheckpoints = data!;
+        _isLoading = false;
         cities = [
           "الكل",
           ...data
               .map((cp) => cp.city)
               .toSet()
-              .where((c) => c != "غير معروف")
-              .toList(),
+              .where((c) => c != "غير معروف"),
         ];
 
         final List<Checkpoint> displayedNow = getFilteredCheckpoints();
+
+        _calculateNewMessages();
 
         if (lastDisplayed.isNotEmpty &&
             displayedNow.length > lastDisplayed.length) {
@@ -186,13 +257,13 @@ class _HomeScreenState extends State<HomeScreen> {
         lastDisplayed = displayedNow;
       });
 
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients && lastReadIndex > 0) {
-          _scrollController.jumpTo(lastReadIndex * 130.0);
-        }
-      });
+      if (_newMessagesCount > 0 && showToast) {
+        _notifyNewMessages();
+      }
 
       if (showToast) {
+        HapticFeedback.lightImpact();
+
         Fluttertoast.showToast(
           msg: "✅ تم تحديث البيانات (${allCheckpoints.length} حاجز)",
           toastLength: Toast.LENGTH_SHORT,
@@ -200,7 +271,11 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     } catch (e) {
+      setState(() => _isLoading = false);
+
       if (showToast) {
+        HapticFeedback.heavyImpact();
+
         Fluttertoast.showToast(
           msg: "❌ فشل الاتصال بالخادم",
           toastLength: Toast.LENGTH_LONG,
@@ -208,6 +283,18 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     }
+  }
+
+  Future<void> _notifyNewMessages() async {
+    final hasVibrator = await Vibration.hasVibrator();
+    if (hasVibrator == true) {
+      Vibration.vibrate(duration: 300);
+    }
+    Fluttertoast.showToast(
+      msg: "📩 وصلتك $_newMessagesCount رسائل جديدة",
+      toastLength: Toast.LENGTH_SHORT,
+      gravity: ToastGravity.BOTTOM,
+    );
   }
 
   void detectChanges(List<Checkpoint> newData) {
@@ -219,7 +306,6 @@ class _HomeScreenState extends State<HomeScreen> {
             "📢 تحديث حالة حاجز مفضل",
             "${cp.name} أصبح ${cp.status}",
           );
-          // إضافة اهتزاز عند التغيير - using null-aware operator
           Vibration.hasVibrator().then((hasVibrator) {
             if (hasVibrator == true) {
               Vibration.vibrate(duration: 200);
@@ -234,12 +320,10 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Checkpoint> getFilteredCheckpoints() {
     List<Checkpoint> filtered = allCheckpoints;
 
-    // فلترة حسب المدينة
     if (selectedCity != "الكل") {
       filtered = filtered.where((cp) => cp.city == selectedCity).toList();
     }
 
-    // فلترة حسب البحث
     if (_searchQuery.isNotEmpty) {
       filtered = filtered
           .where(
@@ -251,18 +335,22 @@ class _HomeScreenState extends State<HomeScreen> {
           .toList();
     }
 
-    // فلترة المفضلة فقط
     if (_showOnlyFavorites) {
       filtered = filtered.where((cp) => favoriteIds.contains(cp.id)).toList();
     }
 
-    // ترتيب حسب الحالة والوقت
+    if (_quickStatusFilter != null) {
+      filtered = filtered.where((cp) =>
+          _quickStatusFilter!.any((status) =>
+              cp.status.toLowerCase().contains(status.toLowerCase())
+          )
+      ).toList();
+    }
+
     filtered.sort((a, b) {
-      // أولاً المفضلة
       if (favoriteIds.contains(a.id) && !favoriteIds.contains(b.id)) return -1;
       if (!favoriteIds.contains(a.id) && favoriteIds.contains(b.id)) return 1;
 
-      // ثم حسب الحالة (المغلق أولاً للتحذير)
       final statusPriority = {
         'مغلق': 0,
         'ازدحام': 1,
@@ -275,7 +363,6 @@ class _HomeScreenState extends State<HomeScreen> {
       final bPriority = statusPriority[b.status] ?? 3;
       if (aPriority != bPriority) return aPriority.compareTo(bPriority);
 
-      // أخيراً حسب توقيت النشر الفعلي
       if (a.effectiveAtDateTime != null && b.effectiveAtDateTime != null) {
         return b.effectiveAtDateTime!.compareTo(a.effectiveAtDateTime!);
       }
@@ -291,6 +378,96 @@ class _HomeScreenState extends State<HomeScreen> {
     if (diff.inMinutes < 60) return "قبل ${diff.inMinutes} د";
     if (diff.inHours < 24) return "قبل ${diff.inHours} س";
     return "قبل ${diff.inDays} يوم";
+  }
+
+  int _countByStatus(List<Checkpoint> checkpoints, List<String> statuses) {
+    return checkpoints.where((cp) =>
+        statuses.any((status) => cp.status.toLowerCase().contains(status.toLowerCase()))
+    ).length;
+  }
+
+  // تحديث widget بناء الإحصائيات السريعة - مع النصوص بدلاً من الأرقام فقط
+  Widget _buildQuickStat(String label, int count, Color color) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: color.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '$count',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: color,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildQuickFilterButton(String label, List<String>? statuses) {
+    final isSelected = (_quickStatusFilter == statuses) ||
+        (statuses == null && _quickStatusFilter == null);
+
+    Color color;
+    if (statuses == null) {
+      color = Colors.grey;
+    } else if (statuses.contains('مفتوح') || statuses.contains('سالكة')) {
+      color = Colors.green;
+    } else if (statuses.contains('مغلق')) {
+      color = Colors.red;
+    } else {
+      color = Colors.orange;
+    }
+
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        child: ElevatedButton(
+          onPressed: () {
+            setState(() {
+              _quickStatusFilter = statuses;
+            });
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: isSelected ? color : Colors.transparent,
+            foregroundColor: isSelected ? Colors.white : color,
+            side: BorderSide(color: color),
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Color getStatusColor(String status) {
@@ -325,6 +502,29 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void scrollToNewMessages() async {
+    if (_scrollController.hasClients && _lastReadIndex != null) {
+      final targetIndex = _lastReadIndex! + 1;
+      final targetOffset = targetIndex * 120.0;
+
+      _scrollController.animateTo(
+        targetOffset,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  void scrollToTop() {
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
   void scrollToBottom() async {
     if (_scrollController.hasClients) {
       _scrollController.animateTo(
@@ -336,7 +536,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     final displayed = getFilteredCheckpoints();
     await prefs.setInt('lastReadMessageIndex', displayed.length - 1);
-    setState(() => newItemsCount = 0);
+    setState(() {
+      newItemsCount = 0;
+      _newMessagesCount = 0;
+      _lastReadIndex = displayed.length - 1;
+    });
   }
 
   void _showFilterDialog() {
@@ -390,10 +594,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final displayed = getFilteredCheckpoints();
 
     DateTime? latestUpdate = displayed
-        .where((c) => c.updatedAt != null)
-        .map((c) => c.effectiveAtDateTime)
-        .where((dt) => dt != null)
-        .cast<DateTime>()
+        .where((c) => c.effectiveAtDateTime != null)
+        .map((c) => c.effectiveAtDateTime!)
         .fold<DateTime?>(
       null,
           (prev, el) => prev == null || el.isAfter(prev) ? el : prev,
@@ -401,7 +603,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('الصفحة الرئيسية'),
+        title: const Text("نقاط التفتيش"),
         actions: [
           IconButton(
             icon: const Icon(Icons.filter_list),
@@ -428,7 +630,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 notificationsEnabled,
               );
 
-              bool? hasVibrator = await Vibration.hasVibrator();
+              final hasVibrator = await Vibration.hasVibrator();
               if (notificationsEnabled && hasVibrator == true) {
                 Vibration.vibrate(duration: 100);
               }
@@ -440,33 +642,81 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             },
           ),
+          // IconButton(
+          //   icon: const Icon(Icons.share),
+          //   tooltip: 'مشاركة إحصائيات',
+          //   onPressed: () async {
+          //     HapticFeedback.lightImpact();
+          //     final openCount = _countByStatus(displayed, ['مفتوح', 'سالكة', 'سالكه', 'سالك']);
+          //     final closedCount = _countByStatus(displayed, ['مغلق']);
+          //     final congestionCount = _countByStatus(displayed, ['ازدحام']);
+          //
+          //     await ShareService.shareGeneralStats(
+          //       displayed.length,
+          //       openCount,
+          //       closedCount,
+          //       congestionCount,
+          //     );
+          //
+          //     Fluttertoast.showToast(
+          //       msg: "تم نسخ الإحصائيات للحافظة",
+          //       toastLength: Toast.LENGTH_SHORT,
+          //     );
+          //   },
+          // ),
         ],
       ),
-      body: Stack(
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Stack(
         children: [
           Column(
             children: [
-              // شريط المعلومات العلوي
               Container(
                 padding: const EdgeInsets.all(8.0),
-                color: Theme.of(context).primaryColor.withOpacity(0.1),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
+                child: Column(
                   children: [
-                    if (latestUpdate != null)
-                      Text(
-                        "آخر تحديث: ${formatRelativeTime(latestUpdate)}",
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    Text(
-                      "${displayed.length} حاجز",
-                      style: Theme.of(context).textTheme.bodySmall,
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        if (latestUpdate != null)
+                          Text(
+                            "آخر تحديث: ${formatRelativeTime(latestUpdate)}",
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        Text(
+                          "${displayed.length} حاجز",
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
                     ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          _buildQuickFilterButton('الكل', null),
+                          _buildQuickFilterButton('سالك', ['مفتوح', 'سالكة', 'سالكه', 'سالك']),
+                          _buildQuickFilterButton('مغلق', ['مغلق']),
+                          _buildQuickFilterButton('ازدحام', ['ازدحام']),
+                        ],
+                      ),
+                    ),
+
+                    // const SizedBox(height: 8),
+                    // Row(
+                    //   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    //   children: [
+                    //     _buildQuickStat('سالك', _countByStatus(displayed, ['مفتوح', 'سالكة', 'سالكه', 'سالك']), Colors.green),
+                    //     _buildQuickStat('مغلق', _countByStatus(displayed, ['مغلق']), Colors.red),
+                    //     _buildQuickStat('ازدحام', _countByStatus(displayed, ['ازدحام']), Colors.orange),
+                    //   ],
+                    // ),
                   ],
                 ),
               ),
 
-              // شريط البحث
               Padding(
                 padding: const EdgeInsets.all(8.0),
                 child: TextField(
@@ -491,11 +741,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   onChanged: (value) {
                     setState(() => _searchQuery = value);
+                    if (value.isNotEmpty) {
+                      CacheService.addToSearchHistory(value);
+                    }
                   },
                 ),
               ),
 
-              // اختيار المدينة
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8.0),
                 child: Row(
@@ -519,7 +771,11 @@ class _HomeScreenState extends State<HomeScreen> {
                           setState(() {
                             selectedCity = value!;
                             newItemsCount = 0;
+                            _newMessagesCount = 0;
                           });
+                          if (value != "الكل") {
+                            CacheService.trackCityView(value!);
+                          }
                         },
                       ),
                     ),
@@ -542,7 +798,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
               const SizedBox(height: 8),
 
-              // قائمة النتائج - هنا التغيير الرئيسي
               Expanded(
                 child: displayed.isEmpty
                     ? Center(
@@ -557,14 +812,18 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 16),
                       Text(
                         'لا توجد نتائج',
-                        style: Theme.of(context).textTheme.titleMedium
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
                             ?.copyWith(color: Colors.grey[600]),
                         textDirection: TextDirection.rtl,
                       ),
                       const SizedBox(height: 8),
                       Text(
                         'جرب تغيير معايير البحث أو الفلترة',
-                        style: Theme.of(context).textTheme.bodyMedium
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodyMedium
                             ?.copyWith(color: Colors.grey[500]),
                         textDirection: TextDirection.rtl,
                       ),
@@ -585,14 +844,56 @@ class _HomeScreenState extends State<HomeScreen> {
                       )
                           : 'غير محدد';
 
-                      return CheckpointCard(
-                        checkpoint: checkpoint,
-                        isFavorite: favoriteIds.contains(checkpoint.id),
-                        onFavoriteToggle: () =>
-                            toggleFavorite(checkpoint.id),
-                        statusColor: getStatusColor(checkpoint.status),
-                        statusIcon: getStatusIcon(checkpoint.status),
-                        relativeTime: relativeTime,
+                      return GestureDetector(
+                        onTap: () => _markAsRead(index),
+                        child: Column(
+                          children: [
+                            if (_lastReadIndex != null &&
+                                index == _lastReadIndex! + 1 &&
+                                _newMessagesCount > 0)
+                              Container(
+                                width: double.infinity,
+                                margin: const EdgeInsets.symmetric(vertical: 8),
+                                padding: const EdgeInsets.symmetric(vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue.withValues(alpha: 0.1),
+                                  border: Border.all(
+                                    color: Colors.blue.withValues(alpha: 0.3),
+                                    width: 1,
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(
+                                      Icons.fiber_new,
+                                      color: Colors.blue,
+                                      size: 20,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      "— $_newMessagesCount رسائل جديدة —",
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.blue,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            CheckpointCard(
+                              checkpoint: checkpoint,
+                              isFavorite: favoriteIds.contains(checkpoint.id),
+                              onToggleFavorite: () =>
+                                  toggleFavorite(checkpoint.id),
+                              statusColor: getStatusColor(checkpoint.status),
+                              statusIcon: getStatusIcon(checkpoint.status),
+                              relativeTime: relativeTime,
+                            ),
+                          ],
+                        ),
                       );
                     },
                   ),
@@ -601,19 +902,38 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
 
-          // زر العناصر الجديدة
-          if (newItemsCount > 0)
-            Positioned(
-              bottom: 16,
-              right: 16,
-              child: FloatingActionButton.extended(
-                onPressed: scrollToBottom,
-                icon: const Icon(Icons.arrow_downward),
-                label: Text('$newItemsCount جديد'),
-                backgroundColor: Theme.of(context).primaryColor,
-                foregroundColor: Colors.white,
-              ),
+          Positioned(
+            bottom: 16,
+            right: 16,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_showScrollToTop)
+                  FloatingActionButton(
+                    heroTag: "scroll_to_top",
+                    mini: true,
+                    onPressed: scrollToTop,
+                    backgroundColor: Colors.grey[600],
+                    foregroundColor: Colors.white,
+                    child: const Icon(Icons.arrow_upward),
+                  ),
+
+                if (_showScrollToTop)
+                  const SizedBox(height: 8),
+
+                // الزر جديد 285 - يبقى ظاهراً دائماً إذا كان هناك رسائل جديدة
+                if (_newMessagesCount > 0)
+                  FloatingActionButton.extended(
+                    heroTag: "new_messages",
+                    onPressed: scrollToNewMessages,
+                    icon: const Icon(Icons.mark_as_unread),
+                    label: Text('جديد $_newMessagesCount'),
+                    backgroundColor: Theme.of(context).primaryColor,
+                    foregroundColor: Colors.white,
+                  ),
+              ],
             ),
+          ),
         ],
       ),
     );

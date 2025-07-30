@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/checkpoint.dart';
 import '../services/api_service.dart';
-import '../utils/checkpoint_statistics_utils.dart'; // استيراد الكلاس الجديد
+import '../utils/checkpoint_statistics_utils.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -15,7 +15,7 @@ class _MapScreenState extends State<MapScreen> {
   bool isLoading = true;
   String? selectedCity;
   List<String> cities = [];
-  CheckpointStatistics? currentStatistics; // لتخزين الإحصائيات المحسوبة
+  CheckpointStatistics? currentStatistics;
 
   @override
   void initState() {
@@ -30,7 +30,7 @@ class _MapScreenState extends State<MapScreen> {
 
       setState(() {
         checkpoints = data;
-        cities = CheckpointStatisticsUtils.getAvailableCities(data); // استخدام Utility
+        cities = CheckpointStatisticsUtils.getAvailableCities(data);
         selectedCity = "الكل";
         // حساب الإحصائيات بعد تحميل البيانات
         currentStatistics = CheckpointStatisticsUtils.calculateStatistics(getFilteredCheckpoints());
@@ -50,12 +50,9 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   List<Checkpoint> getFilteredCheckpoints() {
-    // استخدام Utility لفلترة الحواجز
     return CheckpointStatisticsUtils.filterByCity(checkpoints, selectedCity);
   }
 
-  // هذه الدوال لم تعد ضرورية هنا إذا تم استخدامها فقط لحساب الإحصائيات
-  // ولكن يمكن الاحتفاظ بها إذا كانت تستخدم لأغراض عرض أخرى (مثل ألوان الأيقونات)
   Color getStatusColor(String status) {
     switch (status.toLowerCase()) {
       case 'مفتوح':
@@ -98,7 +95,7 @@ class _MapScreenState extends State<MapScreen> {
           // شريط التحكم
           Container(
             padding: const EdgeInsets.all(16),
-            color: Theme.of(context).primaryColor.withOpacity(0.05),
+            color: Theme.of(context).primaryColor.withValues(alpha: 0.05),
             child: Column(
               children: [
                 Row(
@@ -173,29 +170,51 @@ class _MapScreenState extends State<MapScreen> {
             )
                 : Column(
               children: [
-                // إحصائيات سريعة - استخدام currentStatistics
+                // إحصائيات سريعة
                 Container(
                   margin: const EdgeInsets.all(16),
                   child: Card(
+                    elevation: 4,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                     child: Padding(
                       padding: const EdgeInsets.all(16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'إحصائيات الحواجز',
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                            textDirection: TextDirection.rtl,
-                          ),
-                          const SizedBox(height: 12),
                           Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceAround,
                             children: [
-                              _buildStatusCard('مفتوح', Colors.green, currentStatistics?.open ?? 0),
-                              _buildStatusCard('مغلق', Colors.red, currentStatistics?.closed ?? 0),
-                              _buildStatusCard('ازدحام', Colors.orange, currentStatistics?.congestion ?? 0),
+                              Icon(
+                                Icons.bar_chart,
+                                color: Theme.of(context).primaryColor,
+                                size: 24,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'إحصائيات الحواجز',
+                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                textDirection: TextDirection.rtl,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              Expanded(
+                                child: _buildCompactStatusCard('سالك', Colors.green, currentStatistics?.open ?? 0),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _buildCompactStatusCard('مغلق', Colors.red, currentStatistics?.closed ?? 0),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _buildCompactStatusCard('ازدحام', Colors.orange, currentStatistics?.congestion ?? 0),
+                              ),
                             ],
                           ),
                         ],
@@ -210,28 +229,40 @@ class _MapScreenState extends State<MapScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(
-                          Icons.map_outlined,
-                          size: 80,
-                          color: Colors.grey[400],
+                        Container(
+                          padding: const EdgeInsets.all(32),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(100),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.3),
+                              width: 2,
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.map_outlined,
+                            size: 80,
+                            color: Colors.blueAccent,
+                          ),
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          'خريطة الحواجز',
+                          'خريطة الحواجز التفاعلية',
                           style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                            color: Colors.grey[600],
-                            fontWeight: FontWeight.w600,
+                            color: Colors.blueAccent,
+                            fontWeight: FontWeight.bold,
                           ),
                           textDirection: TextDirection.rtl,
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 16),
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 32),
                           child: Text(
-                            'ستكون متاحة قريباً لعرض الحواجز على الخريطة التفاعلية',
+                            'إن شاءالله ستكون متاحة قريباً لعرض الحواجز على الخريطة التفاعلية',
                             textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: Colors.grey[600],
+                            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                              color: Colors.white.withValues(alpha: 0.8),
+                              height: 1.5,
                               fontSize: 16,
                             ),
                             textDirection: TextDirection.rtl,
@@ -269,40 +300,37 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  Widget _buildStatusCard(String title, Color color, int count) {
-    return Expanded(
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 4),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withOpacity(0.3)),
-        ),
-        child: Column(
-          children: [
-            Text(
-              '$count',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: color,
-              ),
+  Widget _buildCompactStatusCard(String title, Color color, int count) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '$count',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: color,
             ),
-            const SizedBox(height: 4),
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 12,
-                color: color,
-                fontWeight: FontWeight.w600,
-              ),
-              textDirection: TextDirection.rtl,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 12,
+              color: color,
+              fontWeight: FontWeight.w600,
             ),
-          ],
-        ),
+            textDirection: TextDirection.rtl,
+          ),
+        ],
       ),
     );
   }
 }
-

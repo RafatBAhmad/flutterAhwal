@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/checkpoint.dart';
 import '../services/api_service.dart';
-import '../utils/checkpoint_statistics_utils.dart'; // استيراد الكلاس الجديد
+import '../utils/checkpoint_statistics_utils.dart';
 
 class CityFilterScreen extends StatefulWidget {
   const CityFilterScreen({super.key});
@@ -86,34 +86,23 @@ class _CityFilterScreenState extends State<CityFilterScreen> {
     }
   }
 
-  Widget _buildStatusSummary(String status, int count, Color color) {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Text(
-            '$count',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
+  // كارد الإحصائيات الصغيرة - الأرقام فقط بدون نصوص
+  Widget _buildCityStatusCard(String status, Color color, int count) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Text(
+        '$count',
+        style: TextStyle(
+          fontSize: 18,
+          fontWeight: FontWeight.bold,
+          color: color,
         ),
-        const SizedBox(height: 4),
-        Text(
-          status,
-          style: TextStyle(
-            fontSize: 12,
-            color: color,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
+      ),
     );
   }
 
@@ -128,7 +117,7 @@ class _CityFilterScreenState extends State<CityFilterScreen> {
         color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: statusColor.withOpacity(0.3),
+          color: statusColor.withValues(alpha: 0.3),
           width: 1,
         ),
       ),
@@ -147,14 +136,23 @@ class _CityFilterScreenState extends State<CityFilterScreen> {
                   ),
                   textDirection: TextDirection.rtl,
                 ),
-                Text(
-                  checkpoint.status,
-                  style: TextStyle(
-                    color: statusColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
+                Container(
+                  margin: const EdgeInsets.only(top: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: statusColor.withValues(alpha: 0.3)),
                   ),
-                  textDirection: TextDirection.rtl,
+                  child: Text(
+                    checkpoint.status,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    textDirection: TextDirection.rtl,
+                  ),
                 ),
               ],
             ),
@@ -206,9 +204,9 @@ class _CityFilterScreenState extends State<CityFilterScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  _buildStatusSummary('مفتوح', stats.open, Colors.green),
-                  _buildStatusSummary('مغلق', stats.closed, Colors.red),
-                  _buildStatusSummary('ازدحام', stats.congestion, Colors.orange),
+                  _buildCityStatusCard('سالك', Colors.green, stats.open),
+                  _buildCityStatusCard('مغلق', Colors.red, stats.closed),
+                  _buildCityStatusCard('ازدحام', Colors.orange, stats.congestion),
                 ],
               ),
               if (selectedCity == cityName) ...[
@@ -228,46 +226,71 @@ class _CityFilterScreenState extends State<CityFilterScreen> {
     if (isLoading) {
       return const Padding(
         padding: EdgeInsets.all(16),
-        child: CircularProgressIndicator(),
+        child: Center(child: CircularProgressIndicator()),
       );
     }
 
     final allStats = CheckpointStatisticsUtils.calculateStatisticsByCity(allCheckpoints);
     final citySummaries = allStats.entries.map((e) => {
       'city': e.key,
-      'open': e.value.open,
-      'closed': e.value.closed,
-      'congestion': e.value.congestion,
+      'stats': e.value,
     }).toList();
 
     if (citySummaries.isEmpty) return const SizedBox.shrink();
 
-    return SizedBox(
-      height: 100,
+    return Container(
+      height: 120,
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.all(8),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemCount: citySummaries.length,
         itemBuilder: (_, index) {
           final item = citySummaries[index];
+          final stats = item['stats'] as CheckpointStatistics;
+          final cityName = item['city'] as String;
+
           return Container(
-            width: 160,
+            width: 140,
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(12),
               color: Theme.of(context).cardColor,
               border: Border.all(color: Colors.grey.shade300),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(item['city']! as String, style: const TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 4),
-                Text("مفتوح: ${item['open']}", style: const TextStyle(color: Colors.green)),
-                Text("مغلق: ${item['closed']}", style: const TextStyle(color: Colors.red)),
-                Text("ازدحام: ${item['congestion']}", style: const TextStyle(color: Colors.orange)),
+                // اسم المدينة
+                Text(
+                  cityName,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                  textDirection: TextDirection.rtl,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 8),
+
+                // الإحصائيات - الأرقام فقط
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _buildCityStatusCard('سالك', Colors.green, stats.open),
+                    _buildCityStatusCard('مغلق', Colors.red, stats.closed),
+                    _buildCityStatusCard('ازدحام', Colors.orange, stats.congestion),
+                  ],
+                ),
               ],
             ),
           );
@@ -306,5 +329,3 @@ class _CityFilterScreenState extends State<CityFilterScreen> {
     );
   }
 }
-
-

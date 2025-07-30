@@ -1,19 +1,17 @@
 import 'dart:async';
+import 'package:ahwal_app/screens/support_screen.dart';
+import 'package:ahwal_app/screens/splash_screen.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
-import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'package:vibration/vibration.dart';
 import 'screens/home_screen.dart';
 import 'screens/city_filter_screen.dart';
 import 'screens/map_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/api_service.dart';
-import 'models/checkpoint.dart';
-
-
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
@@ -25,7 +23,7 @@ Future<void> showNotification(String title, String body) async {
 
   // التحقق من إمكانية الاهتزاز
   bool? hasVibrator = await Vibration.hasVibrator();
-  if (hasVibrator ?? false) {
+  if (hasVibrator == true) {
     Vibration.vibrate(duration: 500);
   }
 
@@ -92,8 +90,8 @@ void onStart(ServiceInstance service) async {
     service.stopSelf();
   });
 
-  // تحقق من التحديثات كل 10 دقائق
-  Timer.periodic(const Duration(minutes: 10), (timer) async {
+  // تحقق من التحديثات كل 1 دقائق
+  Timer.periodic(const Duration(minutes: 1), (timer) async {
     final prefs = await SharedPreferences.getInstance();
     final notificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
     if (notificationsEnabled) {
@@ -208,10 +206,9 @@ void main() async {
     }
   }
 
-  // الآن قم بتشغيل التطبيق
+  // الآن قم بتشغيل التطبيق مع Splash Screen
   runApp(const AhwalApp());
 }
-
 
 class AhwalApp extends StatefulWidget {
   const AhwalApp({super.key});
@@ -301,7 +298,9 @@ class _AhwalAppState extends State<AhwalApp> {
         ),
       ),
       themeMode: _themeMode,
-      home: MainNavigationScreen(toggleTheme: toggleTheme, themeMode: _themeMode),
+      home: SplashScreen(
+        nextScreen: MainNavigationScreen(toggleTheme: toggleTheme, themeMode: _themeMode),
+      ),
     );
   }
 }
@@ -341,7 +340,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
       HomeScreen(toggleTheme: widget.toggleTheme, themeMode: widget.themeMode),
       const CityFilterScreen(),
       const MapScreen(),
-      // SettingsScreen تم إزالتها من هنا
+      const SupportScreen(),
     ];
 
     _animationController.forward();
@@ -357,7 +356,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
     NavigationItem(icon: Icons.home_outlined, activeIcon: Icons.home, label: 'الرئيسية', title: 'أحوال الطرق'),
     NavigationItem(icon: Icons.filter_list_outlined, activeIcon: Icons.filter_list, label: 'الفلترة', title: 'فلترة حسب المدينة'),
     NavigationItem(icon: Icons.map_outlined, activeIcon: Icons.map, label: 'الخريطة', title: 'خريطة الحواجز'),
-    // NavigationItem(icon: Icons.settings_outlined, activeIcon: Icons.settings, label: 'الإعدادات', title: 'الإعدادات'), // تم إزالتها من هنا
+    NavigationItem(icon: Icons.support_outlined, activeIcon: Icons.support, label: 'الدعم', title: 'الدعم'),
   ];
 
   void _onTabTapped(int index) {
@@ -390,7 +389,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
             onPressed: widget.toggleTheme,
             tooltip: widget.themeMode == ThemeMode.dark ? 'الوضع النهاري' : 'الوضع الليلي',
           ),
-          if (currentIndex != 3) // هذا الشرط لم يعد ضرورياً بعد إزالة الإعدادات من الشريط السفلي
+          if (currentIndex != 3)
             IconButton(
               icon: const Icon(Icons.info_outline),
               onPressed: () => _showAppInfo(context),
@@ -469,5 +468,3 @@ class NavigationItem {
     required this.title,
   });
 }
-
-

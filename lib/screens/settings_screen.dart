@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:vibration/vibration.dart';
+import '../screens/usage_stats_screen.dart';
+import '../screens/color_settings_screen.dart';
+import '../services/cache_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
-
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -63,7 +65,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         leading: Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: Theme.of(context).primaryColor.withOpacity(0.1),
+            color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(icon, color: Theme.of(context).primaryColor),
@@ -138,15 +140,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           TextButton(
             onPressed: () async {
+              final navigator = Navigator.of(context);
+              final messenger = ScaffoldMessenger.of(context);
+
               final prefs = await SharedPreferences.getInstance();
               await prefs.clear();
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
+
+              navigator.pop();
+              messenger.showSnackBar(
                 const SnackBar(
                   content: Text('تم مسح الذاكرة المؤقتة'),
                   backgroundColor: Colors.green,
                 ),
               );
+
               // إعادة تحميل الإعدادات الافتراضية
               loadSettings();
             },
@@ -168,6 +175,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     const NotificationDetails platformDetails = NotificationDetails(android: androidDetails);
 
     final FlutterLocalNotificationsPlugin notifications = FlutterLocalNotificationsPlugin();
+    final messenger = ScaffoldMessenger.of(context);
+
     await notifications.show(
       999,
       'تجربة التنبيه',
@@ -182,7 +191,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    messenger.showSnackBar(
       const SnackBar(
         content: Text('تم إرسال تنبيه تجريبي'),
         backgroundColor: Colors.blue,
@@ -281,7 +290,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   setState(() => onlyFavoritesNotifications = value);
                   saveSetting('only_favorites_notifications', value);
                 }
-                    : null, // تم التصحيح هنا: يمكن أن يكون null إذا كان notificationsEnabled خاطئًا
+                    : null,
               ),
             ),
             _buildSettingTile(
@@ -295,7 +304,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   setState(() => vibrationEnabled = value);
                   saveSetting('vibration_enabled', value);
                 }
-                    : null, // تم التصحيح هنا
+                    : null,
               ),
             ),
             _buildSettingTile(
@@ -309,7 +318,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   setState(() => soundEnabled = value);
                   saveSetting('sound_enabled', value);
                 }
-                    : null, // تم التصحيح هنا
+                    : null,
               ),
             ),
             _buildSettingTile(
@@ -342,6 +351,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onTap: autoRefreshEnabled ? _showRefreshIntervalDialog : null,
             ),
 
+            // قسم التخصيص
+            _buildSectionHeader('التخصيص'),
+            _buildSettingTile(
+              title: 'إعدادات الألوان',
+              subtitle: 'تخصيص ألوان حالة الحواجز',
+              icon: Icons.palette,
+              trailing: const Icon(Icons.arrow_forward_ios),
+              onTap: () async {
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const ColorSettingsScreen()),
+                );
+                if (result == true) {
+                  // تم حفظ الألوان، يمكن إضافة تحديث هنا
+                }
+              },
+            ),
+            _buildSettingTile(
+              title: 'إحصائيات الاستخدام',
+              subtitle: 'عرض تفاصيل استخدام التطبيق',
+              icon: Icons.analytics,
+              trailing: const Icon(Icons.arrow_forward_ios),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const UsageStatsScreen()),
+                );
+              },
+            ),
+
             // قسم البيانات
             _buildSectionHeader('البيانات'),
             _buildSettingTile(
@@ -350,6 +389,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
               icon: Icons.delete_sweep,
               trailing: const Icon(Icons.arrow_forward_ios, color: Colors.red),
               onTap: _clearCache,
+            ),
+            _buildSettingTile(
+              title: 'مسح تاريخ البحث',
+              subtitle: 'حذف جميع عمليات البحث المحفوظة',
+              icon: Icons.history,
+              trailing: const Icon(Icons.arrow_forward_ios, color: Colors.orange),
+              onTap: () {
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('مسح تاريخ البحث', textDirection: TextDirection.rtl),
+                    content: const Text(
+                      'هل تريد مسح تاريخ البحث؟',
+                      textDirection: TextDirection.rtl,
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('إلغاء'),
+                      ),
+                      TextButton(
+                        onPressed: () async {
+                          final navigator = Navigator.of(context);
+                          final messenger = ScaffoldMessenger.of(context);
+
+                          navigator.pop();
+                          await CacheService.clearSearchHistory();
+
+                          messenger.showSnackBar(
+                            const SnackBar(
+                              content: Text('تم مسح تاريخ البحث'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        },
+                        child: const Text('مسح', style: TextStyle(color: Colors.red)),
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
 
             // قسم معلومات التطبيق
@@ -432,4 +512,3 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 }
-

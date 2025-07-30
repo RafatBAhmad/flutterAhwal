@@ -4,19 +4,19 @@ import '../models/checkpoint.dart';
 class CheckpointCard extends StatefulWidget {
   final Checkpoint checkpoint;
   final bool isFavorite;
-  final VoidCallback onFavoriteToggle;
+  final VoidCallback onToggleFavorite;
+  final String relativeTime; // نستخدمه بدلاً من حساب التاريخ داخل الكارد
   final Color statusColor;
   final IconData statusIcon;
-  final String relativeTime;
 
   const CheckpointCard({
     super.key,
     required this.checkpoint,
     required this.isFavorite,
-    required this.onFavoriteToggle,
+    required this.onToggleFavorite,
+    required this.relativeTime,
     required this.statusColor,
     required this.statusIcon,
-    required this.relativeTime,
   });
 
   @override
@@ -28,6 +28,39 @@ class _CheckpointCardState extends State<CheckpointCard> {
 
   @override
   Widget build(BuildContext context) {
+    // فلترة: إخفاء الكارد إذا أقدم من 24 ساعة
+    if (widget.checkpoint.effectiveAtDateTime == null ||
+        DateTime.now()
+            .difference(widget.checkpoint.effectiveAtDateTime!)
+            .inHours > 24) {
+      return const SizedBox.shrink();
+    }
+
+    // تحديد لون الحالة والأيقونة داخلياً
+    Color statusColor;
+    IconData statusIcon;
+    switch (widget.checkpoint.status.toLowerCase()) {
+      case 'مفتوح':
+      case 'سالكة':
+      case 'سالكه':
+      case 'سالك':
+        statusColor = Colors.green;
+        statusIcon = Icons.check_circle;
+        break;
+      case 'مغلق':
+        statusColor = Colors.red;
+        statusIcon = Icons.cancel;
+        break;
+      case 'ازدحام':
+        statusColor = Colors.orange;
+        statusIcon = Icons.warning;
+        break;
+      default:
+        statusColor = Colors.grey;
+        statusIcon = Icons.help;
+        break;
+    }
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
       elevation: 2,
@@ -54,21 +87,17 @@ class _CheckpointCardState extends State<CheckpointCard> {
                     widget.isFavorite ? Icons.star : Icons.star_border,
                     color: widget.isFavorite ? Colors.amber : Colors.grey,
                   ),
-                  onPressed: widget.onFavoriteToggle,
+                  onPressed: widget.onToggleFavorite,
                 ),
               ],
             ),
 
             const SizedBox(height: 8),
 
-            // الصف الثاني: المدينة والحالة
+            // الصف الثاني: المدينة + الحالة
             Row(
               children: [
-                Icon(
-                  Icons.location_on,
-                  size: 16,
-                  color: Colors.grey[600],
-                ),
+                Icon(Icons.location_on, size: 16, color: Colors.grey[600]),
                 const SizedBox(width: 4),
                 Text(
                   widget.checkpoint.city,
@@ -79,27 +108,24 @@ class _CheckpointCardState extends State<CheckpointCard> {
                 ),
                 const Spacer(),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: widget.statusColor.withOpacity(0.1),
+                    color: statusColor.withValues(alpha: (0.1)),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: widget.statusColor, width: 1),
+                    border: Border.all(color: statusColor, width: 1),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        widget.statusIcon,
-                        size: 16,
-                        color: widget.statusColor,
-                      ),
+                      Icon(statusIcon, size: 16, color: statusColor),
                       const SizedBox(width: 4),
                       Text(
                         widget.checkpoint.status,
                         style: TextStyle(
-                          color: widget.statusColor,
+                          color: statusColor,
                           fontWeight: FontWeight.bold,
-                          fontSize: 12,
+                          fontSize: 13,
                         ),
                         textDirection: TextDirection.rtl,
                       ),
@@ -130,41 +156,37 @@ class _CheckpointCardState extends State<CheckpointCard> {
                         height: 1.3,
                       ),
                       textDirection: TextDirection.rtl,
-                      maxLines: _isExpanded ? null : 2,
-                      overflow: _isExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
+                      maxLines: _isExpanded ? null : 3, // 3 أسطر بدل 2
+                      overflow: _isExpanded
+                          ? TextOverflow.visible
+                          : TextOverflow.ellipsis,
                     ),
-
-                    // زر إظهار المزيد/أقل
                     if (_shouldShowExpandButton()) ...[
                       const SizedBox(height: 4),
                       InkWell(
-                        onTap: () {
-                          setState(() {
-                            _isExpanded = !_isExpanded;
-                          });
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                _isExpanded ? 'إظهار أقل' : 'إظهار المزيد',
-                                style: TextStyle(
-                                  color: Theme.of(context).primaryColor,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
-                                ),
-                                textDirection: TextDirection.rtl,
-                              ),
-                              const SizedBox(width: 4),
-                              Icon(
-                                _isExpanded ? Icons.expand_less : Icons.expand_more,
+                        onTap: () =>
+                            setState(() => _isExpanded = !_isExpanded),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _isExpanded ? 'إظهار أقل' : 'إظهار المزيد',
+                              style: TextStyle(
                                 color: Theme.of(context).primaryColor,
-                                size: 16,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
                               ),
-                            ],
-                          ),
+                              textDirection: TextDirection.rtl,
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              _isExpanded
+                                  ? Icons.expand_less
+                                  : Icons.expand_more,
+                              color: Theme.of(context).primaryColor,
+                              size: 16,
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -174,14 +196,10 @@ class _CheckpointCardState extends State<CheckpointCard> {
               const SizedBox(height: 8),
             ],
 
-            // الصف الأخير: التوقيت
+            // الوقت النسبي
             Row(
               children: [
-                Icon(
-                  Icons.access_time,
-                  size: 14,
-                  color: Colors.grey[500],
-                ),
+                Icon(Icons.access_time, size: 14, color: Colors.grey[500]),
                 const SizedBox(width: 4),
                 Text(
                   widget.relativeTime,
@@ -199,11 +217,9 @@ class _CheckpointCardState extends State<CheckpointCard> {
     );
   }
 
-  // تحديد ما إذا كان يجب إظهار زر التوسيع
+  // التحقق إذا النص يحتاج زر "إظهار المزيد"
   bool _shouldShowExpandButton() {
     if (widget.checkpoint.sourceText.isEmpty) return false;
-
-    // حساب عدد الأسطر التقريبي
     final textPainter = TextPainter(
       text: TextSpan(
         text: widget.checkpoint.sourceText,
@@ -212,13 +228,10 @@ class _CheckpointCardState extends State<CheckpointCard> {
           height: 1.3,
         ),
       ),
-      maxLines: 2,
+      maxLines: 3,
       textDirection: TextDirection.rtl,
     );
-
     textPainter.layout(maxWidth: MediaQuery.of(context).size.width - 64);
-
     return textPainter.didExceedMaxLines;
   }
 }
-

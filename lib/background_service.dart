@@ -1,8 +1,6 @@
 import 'package:flutter_background_service/flutter_background_service.dart';
-import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'services/api_service.dart';
-import 'models/checkpoint.dart';
 import 'main.dart'; // للوصول إلى showNotification
 
 Future<void> initializeService() async {
