@@ -921,7 +921,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (_showScrollToTop)
                   const SizedBox(height: 8),
 
-                // الزر جديد 285 - يبقى ظاهراً دائماً إذا كان هناك رسائل جديدة
+                // الزر جديد  - يبقى ظاهراً دائماً إذا كان هناك رسائل جديدة
                 if (_newMessagesCount > 0)
                   FloatingActionButton.extended(
                     heroTag: "new_messages",

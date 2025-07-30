@@ -3,6 +3,7 @@ import '../models/checkpoint.dart';
 import '../services/api_service.dart';
 import '../utils/checkpoint_statistics_utils.dart';
 
+
 class CityFilterScreen extends StatefulWidget {
   const CityFilterScreen({super.key});
 

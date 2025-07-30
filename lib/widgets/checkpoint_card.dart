@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import '../models/checkpoint.dart';
+import '../utils/date_time_utils.dart';
 
 class CheckpointCard extends StatefulWidget {
   final Checkpoint checkpoint;
   final bool isFavorite;
   final VoidCallback onToggleFavorite;
-  final String relativeTime; // نستخدمه بدلاً من حساب التاريخ داخل الكارد
-  final Color statusColor;
+  final  String relativeTime;
   final IconData statusIcon;
+  final Color statusColor;
 
   const CheckpointCard({
     super.key,
@@ -15,8 +16,8 @@ class CheckpointCard extends StatefulWidget {
     required this.isFavorite,
     required this.onToggleFavorite,
     required this.relativeTime,
-    required this.statusColor,
     required this.statusIcon,
+    required this.statusColor,
   });
 
   @override
@@ -28,7 +29,6 @@ class _CheckpointCardState extends State<CheckpointCard> {
 
   @override
   Widget build(BuildContext context) {
-    // فلترة: إخفاء الكارد إذا أقدم من 24 ساعة
     if (widget.checkpoint.effectiveAtDateTime == null ||
         DateTime.now()
             .difference(widget.checkpoint.effectiveAtDateTime!)
@@ -36,7 +36,7 @@ class _CheckpointCardState extends State<CheckpointCard> {
       return const SizedBox.shrink();
     }
 
-    // تحديد لون الحالة والأيقونة داخلياً
+    // تحديد لون الحالة والأيقونة
     Color statusColor;
     IconData statusIcon;
     switch (widget.checkpoint.status.toLowerCase()) {
@@ -62,16 +62,17 @@ class _CheckpointCardState extends State<CheckpointCard> {
     }
 
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+      margin: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      color: Theme.of(context).cardColor,
       elevation: 2,
       child: Padding(
         padding: const EdgeInsets.all(12.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // الصف الأول: اسم الحاجز والمفضلة
+            // الصف الأول: اسم الحاجز + النجمة يسار
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Expanded(
                   child: Text(
@@ -92,17 +93,19 @@ class _CheckpointCardState extends State<CheckpointCard> {
               ],
             ),
 
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
 
             // الصف الثاني: المدينة + الحالة
             Row(
               children: [
-                Icon(Icons.location_on, size: 16, color: Colors.grey[600]),
+                Icon(Icons.location_on, size: 16, color: Colors.grey[500]),
                 const SizedBox(width: 4),
                 Text(
-                  widget.checkpoint.city,
+                  widget.checkpoint.city.isNotEmpty
+                      ? widget.checkpoint.city
+                      : 'غير محدد',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.grey[600],
+                    color: Colors.grey[500],
                   ),
                   textDirection: TextDirection.rtl,
                 ),
@@ -140,11 +143,13 @@ class _CheckpointCardState extends State<CheckpointCard> {
             // النص المصدر مع إمكانية التوسيع
             if (widget.checkpoint.sourceText.isNotEmpty) ...[
               Container(
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: Colors.grey[100],
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? Colors.grey[900]
+                      : Colors.grey[100],
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey[300]!),
+                  border: Border.all(color: Colors.grey[700]!),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -152,11 +157,11 @@ class _CheckpointCardState extends State<CheckpointCard> {
                     Text(
                       widget.checkpoint.sourceText,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.grey[700],
-                        height: 1.3,
+                        color: Colors.grey[300],
+                        height: 1.4,
                       ),
                       textDirection: TextDirection.rtl,
-                      maxLines: _isExpanded ? null : 3, // 3 أسطر بدل 2
+                      maxLines: _isExpanded ? null : 3,
                       overflow: _isExpanded
                           ? TextOverflow.visible
                           : TextOverflow.ellipsis,
@@ -196,16 +201,17 @@ class _CheckpointCardState extends State<CheckpointCard> {
               const SizedBox(height: 8),
             ],
 
-            // الوقت النسبي
+            // التاريخ أسفل مثل الصورة
             Row(
               children: [
                 Icon(Icons.access_time, size: 14, color: Colors.grey[500]),
                 const SizedBox(width: 4),
                 Text(
-                  widget.relativeTime,
+                  DateTimeUtils.formatCheckpointDate(
+                      widget.checkpoint.effectiveAtDateTime),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Colors.grey[500],
-                    fontSize: 11,
+                    fontSize: 12,
                   ),
                   textDirection: TextDirection.rtl,
                 ),
@@ -217,7 +223,6 @@ class _CheckpointCardState extends State<CheckpointCard> {
     );
   }
 
-  // التحقق إذا النص يحتاج زر "إظهار المزيد"
   bool _shouldShowExpandButton() {
     if (widget.checkpoint.sourceText.isEmpty) return false;
     final textPainter = TextPainter(

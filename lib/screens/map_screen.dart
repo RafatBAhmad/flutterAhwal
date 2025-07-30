@@ -86,7 +86,6 @@ class _MapScreenState extends State<MapScreen> {
   @override
   Widget build(BuildContext context) {
     final filteredCheckpoints = getFilteredCheckpoints();
-    // إعادة حساب الإحصائيات عند تغيير الفلتر
     currentStatistics = CheckpointStatisticsUtils.calculateStatistics(filteredCheckpoints);
 
     return Scaffold(
@@ -119,17 +118,10 @@ class _MapScreenState extends State<MapScreen> {
                         onChanged: (value) {
                           setState(() {
                             selectedCity = value;
-                            // إعادة حساب الإحصائيات عند تغيير المدينة
                             currentStatistics = CheckpointStatisticsUtils.calculateStatistics(getFilteredCheckpoints());
                           });
                         },
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    IconButton(
-                      onPressed: loadCheckpoints,
-                      icon: const Icon(Icons.refresh),
-                      tooltip: 'تحديث البيانات',
                     ),
                   ],
                 ),
@@ -223,7 +215,7 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                 ),
 
-                // رسالة حول الخريطة
+                // رسالة حول الخريطة مع أيقونة الخريطة البيضاء
                 Expanded(
                   child: Center(
                     child: Column(
@@ -232,7 +224,7 @@ class _MapScreenState extends State<MapScreen> {
                         Container(
                           padding: const EdgeInsets.all(32),
                           decoration: BoxDecoration(
-                            color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
+                            color: Colors.white.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(100),
                             border: Border.all(
                               color: Colors.white.withValues(alpha: 0.3),
@@ -258,11 +250,11 @@ class _MapScreenState extends State<MapScreen> {
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 32),
                           child: Text(
-                            'إن شاءالله ستكون متاحة قريباً لعرض الحواجز على الخريطة التفاعلية',
+                            'إن شاء الله ستكون متاحة قريباً لعرض الحواجز على الخريطة التفاعلية',
                             textAlign: TextAlign.center,
                             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                              color: Colors.white.withValues(alpha: 0.8),
-                              height: 1.5,
+                              color: Colors.blueAccent.withValues(alpha: 0.8),
+                              height: 1.6,
                               fontSize: 16,
                             ),
                             textDirection: TextDirection.rtl,
@@ -271,7 +263,6 @@ class _MapScreenState extends State<MapScreen> {
                         const SizedBox(height: 24),
                         ElevatedButton.icon(
                           onPressed: () {
-                            // يمكن إضافة navigation إلى شاشة القائمة أو التفاصيل
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
                                 content: Text('الخريطة التفاعلية قيد التطوير'),
@@ -279,13 +270,24 @@ class _MapScreenState extends State<MapScreen> {
                               ),
                             );
                           },
-                          icon: const Icon(Icons.location_on),
-                          label: const Text('عرض قائمة الحواجز'),
+                          icon: const Icon(Icons.location_on, color: Colors.white),
+                          label: const Text(
+                            'عرض قائمة الحواجز',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                           style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue.withValues(alpha: 0.8),
                             padding: const EdgeInsets.symmetric(
                               horizontal: 24,
                               vertical: 12,
                             ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(25),
+                            ),
+                            elevation: 4,
                           ),
                         ),
                       ],
@@ -299,7 +301,6 @@ class _MapScreenState extends State<MapScreen> {
       ),
     );
   }
-
   Widget _buildCompactStatusCard(String title, Color color, int count) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
