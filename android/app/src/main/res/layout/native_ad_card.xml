@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.gms.ads.nativead.NativeAdView xmlns:android="http://schemas.android.com/apk/res/android"
+                                                  android:id="@+id/native_ad_view"
+                                                  android:layout_width="match_parent"
+                                                  android:layout_height="wrap_content"
+                                                  android:layout_margin="8dp"
+                                                  android:background="@drawable/ad_card_background"
+                                                  android:padding="12dp">
+
+    <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+        <!-- الجزء العلوي: أيقونة + عنوان + إشارة إعلان -->
+        <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+            <ImageView
+                    android:id="@+id/ad_icon"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_marginEnd="12dp"
+                    android:scaleType="centerCrop"
+                    android:background="@drawable/ad_card_background" />
+
+            <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                <TextView
+                        android:id="@+id/ad_headline"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="#212121"
+                        android:ellipsize="end"
+                        android:maxLines="2" />
+
+                <TextView
+                        android:id="@+id/ad_body"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:textSize="14sp"
+                        android:textColor="#757575"
+                        android:ellipsize="end"
+                        android:maxLines="3" />
+            </LinearLayout>
+
+            <!-- إشارة أن هذا إعلان -->
+            <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="إعلان"
+                    android:textSize="10sp"
+                    android:textColor="#757575"
+                    android:background="#EEEEEE"
+                    android:padding="4dp"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="4dp" />
+        </LinearLayout>
+
+        <!-- زر الدعوة للعمل -->
+        <Button
+                android:id="@+id/ad_call_to_action"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@android:color/white"
+                android:background="#2196F3"
+                android:padding="12dp"
+                android:layout_gravity="center"
+                android:minHeight="48dp" />
+    </LinearLayout>
+</com.google.android.gms.ads.nativead.NativeAdView>

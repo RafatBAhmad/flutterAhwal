@@ -1,7 +1,8 @@
-name: ahwal_app
-description: تطبيق يعرض حالة الحواجز العسكرية في الضفة الغربية
+name: tariqi_app
+description: تطبيق نمط الحياة الذكي لتحسين رحلاتك اليومية في فلسطين
 publish_to: "none"
-version: 1.0.0+1
+# 🔥 تحديث معلومات الإصدار للنشر
+version: 1.0.1+2
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -22,17 +23,43 @@ dependencies:
   shared_preferences: ^2.2.2
   flutter_background_service: ^5.1.0
   flutter_background_service_android: ^6.3.0
-
-
+  google_mobile_ads: ^5.0.0
+  share_plus: ^7.2.2
+  webview_flutter: ^4.4.2
+  device_info_plus: ^10.1.0
+  url_launcher: ^6.2.5
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
 
+  # 🔥 أدوات مهمة للبيلد
+  flutter_launcher_icons: ^0.13.1
+
+# 🔥 تكوين أيقونة التطبيق
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "lib/assets/icon/app_icon.png"
+  min_sdk_android: 21 # android min sdk min:16, default 21
+  web:
+    generate: true
+    image_path: "assets/icon/app_icon.png"
+    background_color: "#hexcode"
+    theme_color: "#hexcode"
+  windows:
+    generate: true
+    image_path: "assets/icon/app_icon.png"
+    icon_size: 48 # min:48, max:256, default: 48
+
 flutter:
   uses-material-design: true
   generate: true
+
+  assets:
+    - lib/assets/icon/
+    - lib/assets/images/
 
 flutter_localization:
   assets-path: l10n

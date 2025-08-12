@@ -12,3 +12,20 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# 🔥 ملفات مهمة يجب عدم رفعها لـ git
+key.properties
+*.jks
+*.keystore
+
+# ملفات بناء Android
+gradle-wrapper.jar
+/.gradle
+/captures/
+/gradlew
+/gradlew.bat
+/local.properties
+GeneratedPluginRegistrant.java
+
+# Remember to never commit key.properties or any keystore files to git!
+# Keep backups of these files in a secure location separate from your code.

@@ -28,7 +28,7 @@ class _CityFilterScreenState extends State<CityFilterScreen> {
     setState(() => isLoading = true);
 
     try {
-      final data = await ApiService.getAllCheckpoints();
+      final data = await ApiService.fetchLatestOnly();
       if (!mounted) return;
 
       final Map<String, List<Checkpoint>> cityGroups = {};

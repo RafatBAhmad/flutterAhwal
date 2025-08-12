@@ -203,21 +203,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('حول التطبيق', textDirection: TextDirection.rtl),
+        title: const Text('حول طريقي', textDirection: TextDirection.rtl),
         content: const SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'تطبيق أحوال الطرق',
+                'طريقي - دليل الطرق الذكي',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 textDirection: TextDirection.rtl,
               ),
               SizedBox(height: 8),
-              Text('الإصدار: 1.0.0', textDirection: TextDirection.rtl),
+              Text('الإصدار: 1.0.1', textDirection: TextDirection.rtl),
               SizedBox(height: 8),
-              Text('تطبيق لمتابعة حالة الحواجز والطرق في الوقت الفعلي', textDirection: TextDirection.rtl),
+              Text('تطبيق نمط حياة ذكي لتحسين تجربة السفر والتنقل اليومي في فلسطين.', textDirection: TextDirection.rtl),
               SizedBox(height: 16),
               Text(
                 'المميزات:',
@@ -225,15 +225,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 textDirection: TextDirection.rtl,
               ),
               SizedBox(height: 8),
-              Text('• تحديث تلقائي للبيانات', textDirection: TextDirection.rtl),
-              Text('• إشعارات للحواجز المفضلة', textDirection: TextDirection.rtl),
-              Text('• فلترة حسب المدينة', textDirection: TextDirection.rtl),
-              Text('• بحث سريع', textDirection: TextDirection.rtl),
-              Text('• وضع ليلي ونهاري', textDirection: TextDirection.rtl),
-              Text('• إعدادات متقدمة', textDirection: TextDirection.rtl),
+              Text('• مراقبة حالة الطرق في الوقت الفعلي', textDirection: TextDirection.rtl),
+              Text('• تنبيهات ذكية للطرق المفضلة', textDirection: TextDirection.rtl),
+              Text('• واجهة عربية سهلة الاستخدام', textDirection: TextDirection.rtl),
+              Text('• تحسين تجربة السفر اليومي', textDirection: TextDirection.rtl),
               SizedBox(height: 16),
               Text(
                 'تم التطوير من قبل فريق ضاد التقني',
+                textAlign: TextAlign.center,
+                textDirection: TextDirection.rtl,
+              ),
+              Text(
+                'طريقي يجعل حياتك أسهل!',
+                style: TextStyle(fontStyle: FontStyle.italic),
                 textAlign: TextAlign.center,
                 textDirection: TextDirection.rtl,
               ),
@@ -489,7 +493,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'لمتابعة أحوال الطرق والحواجز في الوقت الفعلي',
+                    'لمتابعة أحوال الطرق والحواجز',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Colors.grey[600],
                     ),
@@ -498,7 +502,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'الإصدار 1.0.0',
+                    'الإصدار 1.0.3',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Colors.grey[500],
                     ),

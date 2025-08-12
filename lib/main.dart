@@ -1,17 +1,20 @@
 import 'dart:async';
-import 'package:ahwal_app/screens/support_screen.dart';
-import 'package:ahwal_app/screens/splash_screen.dart';
+import 'screens/home_screen.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'screens/city_filter_screen.dart';
+import 'screens/map_screen.dart';
+import 'screens/settings_screen.dart';
+import 'screens/support_screen.dart';
+import 'screens/splash_screen.dart';
+import 'services/api_service.dart';
+import 'widgets/banner_ad_widget.dart'; // 🔥 إضافة import للبانر
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:vibration/vibration.dart';
-import 'screens/home_screen.dart';
-import 'screens/city_filter_screen.dart';
-import 'screens/map_screen.dart';
-import 'screens/settings_screen.dart';
-import 'services/api_service.dart';
+
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
@@ -107,7 +110,7 @@ Future<void> _checkForUpdates() async {
 
     if (favoriteIds.isEmpty) return;
 
-    final allCheckpoints = await ApiService.getAllCheckpoints();
+    final allCheckpoints = await ApiService.fetchLatestOnly();
     final Map<String, String> lastStatuses = Map<String, String>.from(
       prefs.getString('last_statuses') != null
           ? _parseQueryString(prefs.getString('last_statuses')!)
@@ -164,7 +167,7 @@ String _buildQueryString(Map<String, String> params) {
 void main() async {
   // تأكد من تهيئة كل شيء قبل تشغيل التطبيق
   WidgetsFlutterBinding.ensureInitialized();
-
+  await MobileAds.instance.initialize();
   // إذا كان التطبيق يعمل على الويب، لا تقم بتهيئة الخدمات
   if (kIsWeb) {
     debugPrint('🌐 Running on web - skipping platform-specific features');
@@ -248,7 +251,7 @@ class _AhwalAppState extends State<AhwalApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'أحوال الطرق',
+      title: 'طريقي - دليل الطرق الذكي',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.blue,
@@ -304,7 +307,6 @@ class _AhwalAppState extends State<AhwalApp> {
     );
   }
 }
-
 class MainNavigationScreen extends StatefulWidget {
   final VoidCallback toggleTheme;
   final ThemeMode themeMode;
@@ -367,13 +369,43 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
     }
   }
 
+  // 🔥 دالة تحديد أيقونة الثيم الصحيحة
+  IconData _getCurrentThemeIcon() {
+    final brightness = Theme.of(context).brightness;
+    if (widget.themeMode == ThemeMode.system) {
+      // في وضع النظام، نعتمد على brightness الحالي
+      return brightness == Brightness.dark
+          ? Icons.wb_sunny_outlined  // شمس في الوضع الداكن
+          : Icons.nightlight_round;  // هلال في الوضع الفاتح
+    } else {
+      // في الأوضاع اليدوية
+      return widget.themeMode == ThemeMode.dark
+          ? Icons.wb_sunny_outlined  // شمس في الوضع الداكن
+          : Icons.nightlight_round;  // هلال في الوضع الفاتح
+    }
+  }
+
+  // 🔥 دالة تحديد نص التلميح الصحيح
+  String _getCurrentThemeTooltip() {
+    final brightness = Theme.of(context).brightness;
+    if (widget.themeMode == ThemeMode.system) {
+      return brightness == Brightness.dark
+          ? 'تفعيل الوضع النهاري'
+          : 'تفعيل الوضع الليلي';
+    } else {
+      return widget.themeMode == ThemeMode.dark
+          ? 'تفعيل الوضع النهاري'
+          : 'تفعيل الوضع الليلي';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(navigationItems[currentIndex].title),
         actions: [
-          // زر الإعدادات الجديد
+          // زر الإعدادات
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () {
@@ -384,11 +416,18 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
             },
             tooltip: 'الإعدادات',
           ),
+
+          // 🔥 إصلاح زر الوضع الليلي
           IconButton(
-            icon: Icon(widget.themeMode == ThemeMode.dark ? Icons.wb_sunny_outlined : Icons.nightlight_round),
-            onPressed: widget.toggleTheme,
-            tooltip: widget.themeMode == ThemeMode.dark ? 'الوضع النهاري' : 'الوضع الليلي',
+            icon: Icon(_getCurrentThemeIcon()),
+            onPressed: () {
+              widget.toggleTheme();
+              // 🔥 إضافة تحديث فوري للواجهة
+              setState(() {});
+            },
+            tooltip: _getCurrentThemeTooltip(),
           ),
+
           if (currentIndex != 3)
             IconButton(
               icon: const Icon(Icons.info_outline),
@@ -397,9 +436,18 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
             ),
         ],
       ),
-      body: FadeTransition(
-        opacity: _animation,
-        child: screens[currentIndex],
+      body: Column(
+        children: [
+          // المحتوى الرئيسي
+          Expanded(
+            child: FadeTransition(
+              opacity: _animation,
+              child: screens[currentIndex],
+            ),
+          ),
+          // إعلان البانر في أسفل كل صفحة
+          const BannerAdWidget(),
+        ],
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: currentIndex,
@@ -429,9 +477,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('تطبيق أحوال الطرق', style: TextStyle(fontWeight: FontWeight.bold)),
+              Text('تطبيق طريقي - دليل الطرق الذكي', style: TextStyle(fontWeight: FontWeight.bold)),
               SizedBox(height: 8),
-              Text('الإصدار: 1.0.0'),
+              Text('الإصدار: 1.0.1'),
               SizedBox(height: 8),
               Text('تطبيق لمتابعة حالة الحواجز والطرق في الوقت الفعلي.'),
               SizedBox(height: 12),
@@ -441,6 +489,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
               Text('• إشعارات للحواجز المفضلة'),
               Text('• فلترة حسب المدينة'),
               Text('• وضع ليلي ونهاري'),
+              Text('• عرض جميع الرسائل أو آخر حالة'),
             ],
           ),
         ),
@@ -454,7 +503,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
     );
   }
 }
-
 class NavigationItem {
   final IconData icon;
   final IconData activeIcon;

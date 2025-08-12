@@ -26,7 +26,7 @@ void onStart(ServiceInstance service) async {
 
   if (!notificationsEnabled || favoriteIds.isEmpty) return;
 
-  final allCheckpoints = await ApiService.getAllCheckpoints();
+  final allCheckpoints = await ApiService.fetchLatestOnly();
   final Map<String, String> lastStatuses = Map<String, String>.from(
     prefs.getString('last_statuses') != null
         ? Map<String, dynamic>.from(Uri.splitQueryString(prefs.getString('last_statuses')!))

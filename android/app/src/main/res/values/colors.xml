@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ألوان مخصصة للإعلانات -->
+    <color name="ad_background">#F5F5F5</color>
+    <color name="ad_text_primary">#212121</color>
+    <color name="ad_text_secondary">#757575</color>
+    <color name="ad_button_primary">#2196F3</color>
+    <color name="ad_border">#E0E0E0</color>
+
+    <!-- ألوان عامة -->
+    <color name="light_gray">#EEEEEE</color>
+    <color name="medium_gray">#BDBDBD</color>
+    <color name="dark_gray">#616161</color>
+</resources>

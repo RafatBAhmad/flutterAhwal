@@ -1,4 +1,6 @@
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
+import 'package:share_plus/share_plus.dart'; // 🔥 إضافة مكتبة المشاركة
 import '../models/checkpoint.dart';
 
 class ShareService {
@@ -16,7 +18,7 @@ class ShareService {
 $statusEmoji ${checkpoint.status}
 ⏰ $timeAgo
 
-📱 تطبيق أحوال الطرق
+📱 تطبيق طريقي - أحوال الطرق
 متابعة حالة الحواجز في الوقت الفعلي
     '''.trim();
 
@@ -33,7 +35,7 @@ $statusEmoji ${checkpoint.status}
 ⚠️ ازدحام: $congestion
 📈 المجموع: ${open + closed + congestion}
 
-📱 تطبيق أحوال الطرق
+📱 تطبيق طريقي - أحوال الطرق
     '''.trim();
 
     await _shareText(message);
@@ -42,7 +44,7 @@ $statusEmoji ${checkpoint.status}
   // مشاركة التطبيق
   static Future<void> shareApp() async {
     final String message = '''
-🚗 تطبيق أحوال الطرق
+🚗 تطبيق طريقي - أحوال الطرق
 
 تابع حالة الحواجز والطرق في الوقت الفعلي!
 
@@ -51,11 +53,12 @@ $statusEmoji ${checkpoint.status}
 • إشعارات للحواجز المفضلة  
 • فلترة حسب المدينة والحالة
 • وضع ليلي مريح للعينين
+• مشاركة سهلة للحواجز
 
 📲 حمّل التطبيق الآن
 [رابط التطبيق سيُضاف لاحقاً]
 
-#أحوال_الطرق #فلسطين #الحواجز
+#طريقي #أحوال_الطرق #فلسطين #الحواجز
     '''.trim();
 
     await _shareText(message);
@@ -64,7 +67,7 @@ $statusEmoji ${checkpoint.status}
   // مشاركة قائمة حواجز مفضلة
   static Future<void> shareFavoriteCheckpoints(List<Checkpoint> favorites) async {
     if (favorites.isEmpty) {
-      await _shareText('لا توجد حواجز مفضلة حالياً 📱 تطبيق أحوال الطرق');
+      await _shareText('لا توجد حواجز مفضلة حالياً 📱 تطبيق طريقي - أحوال الطرق');
       return;
     }
 
@@ -73,16 +76,18 @@ $statusEmoji ${checkpoint.status}
 
     for (final checkpoint in favorites.take(10)) { // أقصى 10 حواجز
       final String statusEmoji = _getStatusEmoji(checkpoint.status);
+      final String timeAgo = _getTimeAgo(checkpoint.effectiveAtDateTime);
       message.writeln('📍 ${checkpoint.name}');
       message.writeln('   🏙️ ${checkpoint.city}');
-      message.writeln('   $statusEmoji ${checkpoint.status}\n');
+      message.writeln('   $statusEmoji ${checkpoint.status}');
+      message.writeln('   ⏰ $timeAgo\n');
     }
 
     if (favorites.length > 10) {
       message.writeln('... و ${favorites.length - 10} حواجز أخرى\n');
     }
 
-    message.writeln('📱 تطبيق أحوال الطرق');
+    message.writeln('📱 تطبيق طريقي - أحوال الطرق');
 
     await _shareText(message.toString());
   }
@@ -100,7 +105,7 @@ $statusEmoji ${checkpoint.status}
 
 ⏰ ${DateTime.now().toString().split(' ')[0]}
 
-📱 تطبيق أحوال الطرق
+📱 تطبيق طريقي - أحوال الطرق
     '''.trim();
 
     await _shareText(message);
@@ -114,16 +119,58 @@ $statusEmoji ${checkpoint.status}
   // مشاركة النص الفعلية
   static Future<void> _shareText(String text) async {
     try {
-      // في Flutter، يمكننا استخدام مكتبة share_plus
-      // للبساطة، سنقوم بنسخ النص للحافظة مع رسالة
-      await copyToClipboard(text);
-
-      // في التطبيق الحقيقي، يجب إضافة:
-      // await Share.share(text);
-
+      if (kIsWeb) {
+        // على الويب، نسخ فقط للحافظة
+        await copyToClipboard(text);
+      } else {
+        // 🔥 على المنصات الأخرى، استخدام المشاركة الحقيقية
+        await Share.share(
+          text,
+          subject: 'طريقي - أحوال الطرق',
+        );
+      }
     } catch (e) {
       // في حالة الفشل، نسخ فقط
       await copyToClipboard(text);
+    }
+  }
+
+  // مشاركة مع إمكانية اختيار التطبيق
+  static Future<void> shareWithOptions(String text, {String? subject}) async {
+    try {
+      if (kIsWeb) {
+        await copyToClipboard(text);
+      } else {
+        final result = await Share.shareWithResult(
+          text,
+          subject: subject ?? 'طريقي - أحوال الطرق',
+        );
+
+        // يمكن معالجة نتيجة المشاركة هنا
+        if (result.status == ShareResultStatus.success) {
+          debugPrint('تمت المشاركة بنجاح');
+        }
+      }
+    } catch (e) {
+      await copyToClipboard(text);
+    }
+  }
+
+  // مشاركة مع ملفات (للصور مستقبلاً)
+  static Future<void> shareFiles(List<String> paths, {String? text}) async {
+    try {
+      if (!kIsWeb) {
+        await Share.shareXFiles(
+          paths.map((path) => XFile(path)).toList(),
+          text: text,
+          subject: 'طريقي - أحوال الطرق',
+        );
+      }
+    } catch (e) {
+      // fallback للنص فقط
+      if (text != null) {
+        await _shareText(text);
+      }
     }
   }
 
@@ -160,5 +207,29 @@ $statusEmoji ${checkpoint.status}
     } else {
       return 'قبل ${difference.inDays} يوم';
     }
+  }
+
+  // مشاركة سريعة للحالة فقط
+  static Future<void> shareQuickStatus(String checkpointName, String status) async {
+    final String statusEmoji = _getStatusEmoji(status);
+    final String message = '''
+🚧 $checkpointName
+$statusEmoji $status
+
+📱 تطبيق طريقي
+    '''.trim();
+
+    await _shareText(message);
+  }
+
+  // مشاركة مخصصة بنص حر
+  static Future<void> shareCustomMessage(String customText) async {
+    final String message = '''
+$customText
+
+📱 تطبيق طريقي - أحوال الطرق
+    '''.trim();
+
+    await _shareText(message);
   }
 }

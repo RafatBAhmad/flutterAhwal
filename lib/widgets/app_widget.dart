@@ -36,7 +36,7 @@ class _CheckpointWidgetState extends State<CheckpointWidget> {
 
       // إذا لم يكن هناك كاش صالح، تحميل من API
       if (checkpoints == null) {
-        checkpoints = await ApiService.getAllCheckpoints();
+        checkpoints = await ApiService.fetchLatestOnly();
         await CacheService.cacheCheckpoints(checkpoints);
       }
 
