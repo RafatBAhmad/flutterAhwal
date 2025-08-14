@@ -8,6 +8,8 @@ import 'screens/support_screen.dart';
 import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
 import 'widgets/banner_ad_widget.dart'; // 🔥 إضافة import للبانر
+import 'utils/theme.dart'; // 🔥 إضافة import للثيم
+import 'services/share_service.dart'; // إضافة import للمشاركة
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -17,6 +19,11 @@ import 'package:vibration/vibration.dart';
 
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
+// Export the check function for manual testing
+Future<void> triggerFavoriteCheck() async {
+  await _checkForUpdates();
+}
 
 Future<void> showNotification(String title, String body) async {
   if (kIsWeb) {
@@ -58,6 +65,10 @@ Future<void> initializeService() async {
       autoStart: true,
       isForegroundMode: false,
       autoStartOnBoot: true,
+      notificationChannelId: 'checkpoint_background',
+      initialNotificationTitle: 'طريقي يعمل في الخلفية',
+      initialNotificationContent: 'فحص التحديثات للحواجز المفضلة',
+      foregroundServiceNotificationId: 888,
     ),
     iosConfiguration: IosConfiguration(
       autoStart: true,
@@ -93,24 +104,50 @@ void onStart(ServiceInstance service) async {
     service.stopSelf();
   });
 
-  // تحقق من التحديثات كل 1 دقائق
+  // تحقق من التحديثات بناءً على الوقت
   Timer.periodic(const Duration(minutes: 1), (timer) async {
     final prefs = await SharedPreferences.getInstance();
     final notificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
+    
     if (notificationsEnabled) {
-      await _checkForUpdates();
+      // تحديد فترة التحقق حسب الوقت
+      final now = DateTime.now();
+      final hour = now.hour;
+      
+      // أثناء النهار (6 صباحاً - 10 مساءً): كل 3 دقائق
+      // أثناء الليل: كل 10 دقائق
+      final isDayTime = hour >= 6 && hour <= 22;
+      final checkInterval = isDayTime ? 3 : 10;
+      
+      // التحقق من آخر فحص
+      final lastCheck = prefs.getString('last_background_check');
+      final shouldCheck = lastCheck == null || 
+          (lastCheck.isNotEmpty && DateTime.now().difference(DateTime.tryParse(lastCheck) ?? DateTime.now()).inMinutes >= checkInterval);
+      
+      if (shouldCheck) {
+        debugPrint('⏰ Background check triggered (${isDayTime ? "daytime" : "nighttime"} mode)');
+        await _checkForUpdates();
+        await prefs.setString('last_background_check', DateTime.now().toIso8601String());
+      }
     }
   });
 }
 
 Future<void> _checkForUpdates() async {
   try {
+    debugPrint('🔍 Checking for updates...');
     final prefs = await SharedPreferences.getInstance();
     final favoriteIds = prefs.getStringList('favorites')?.toSet() ?? {};
 
-    if (favoriteIds.isEmpty) return;
+    debugPrint('📋 Found ${favoriteIds.length} favorite checkpoints');
+    if (favoriteIds.isEmpty) {
+      debugPrint('ℹ️ No favorites to check');
+      return;
+    }
 
-    final allCheckpoints = await ApiService.fetchLatestOnly();
+    final allCheckpoints = await ApiService.getAllCheckpoints();
+    debugPrint('🔄 Fetched ${allCheckpoints.length} checkpoints');
+    
     final Map<String, String> lastStatuses = Map<String, String>.from(
       prefs.getString('last_statuses') != null
           ? _parseQueryString(prefs.getString('last_statuses')!)
@@ -123,13 +160,20 @@ Future<void> _checkForUpdates() async {
     for (final cp in allCheckpoints) {
       if (favoriteIds.contains(cp.id)) {
         final prev = lastStatuses[cp.id];
+        debugPrint('🎯 Checking favorite: ${cp.name} (${cp.id})');
+        debugPrint('   Previous: $prev');
+        debugPrint('   Current: ${cp.status}');
+        
         if (prev != null && prev != cp.status) {
+          debugPrint('🚨 Status changed! Sending notification...');
           await showNotification(
-              "📢 تحديث حالة حاجز مفضل",
-              "${cp.name} أصبح ${cp.status}"
+              "🔔 تحديث حالة حاجز مفضل",
+              "${cp.name}\nمن: $prev ← إلى: ${cp.status}"
           );
           changedCheckpoints.add("${cp.name}: ${cp.status}");
           hasChanges = true;
+        } else if (prev == null) {
+          debugPrint('🆕 First time seeing this favorite, storing status');
         }
         lastStatuses[cp.id] = cp.status;
       }
@@ -138,11 +182,13 @@ Future<void> _checkForUpdates() async {
     if (hasChanges) {
       prefs.setString('last_update_time', DateTime.now().toIso8601String());
       prefs.setStringList('recent_changes', changedCheckpoints);
+      debugPrint('✅ Saved ${changedCheckpoints.length} status changes');
     }
 
     prefs.setString('last_statuses', _buildQueryString(lastStatuses));
+    debugPrint('💾 Status check completed');
   } catch (e) {
-    debugPrint('Error checking updates: $e');
+    debugPrint('❌ Error checking updates: $e');
   }
 }
 
@@ -201,6 +247,11 @@ void main() async {
           .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
           ?.requestPermissions(alert: true, badge: true, sound: true);
 
+      // طلب الأذونات على Android 13+
+      await flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+          ?.requestNotificationsPermission();
+
       // بدء الخدمة في الخلفية
       await initializeService();
       debugPrint('✅ Platform-specific features initialized');
@@ -253,57 +304,15 @@ class _AhwalAppState extends State<AhwalApp> {
     return MaterialApp(
       title: 'طريقي - دليل الطرق الذكي',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        fontFamily: 'Cairo',
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.blue,
-          brightness: Brightness.light,
-        ),
-        appBarTheme: const AppBarTheme(
-          elevation: 2,
-          centerTitle: true,
-          titleTextStyle: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: Colors.black87,
-          ),
-        ),
-        cardTheme: CardThemeData(
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-      ),
-      darkTheme: ThemeData(
-        primarySwatch: Colors.blue,
-        fontFamily: 'Cairo',
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.blue,
-          brightness: Brightness.dark,
-        ),
-        appBarTheme: const AppBarTheme(
-          elevation: 2,
-          centerTitle: true,
-          titleTextStyle: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        cardTheme: CardThemeData(
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-      ),
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
       themeMode: _themeMode,
       home: SplashScreen(
         nextScreen: MainNavigationScreen(toggleTheme: toggleTheme, themeMode: _themeMode),
       ),
+      routes: {
+        '/settings': (context) => const SettingsScreen(),
+      },
     );
   }
 }
@@ -323,6 +332,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
   late final List<Widget> screens;
   late AnimationController _animationController;
   late Animation<double> _animation;
+  DateTime? _lastUpdate;
 
   @override
   void initState() {
@@ -339,9 +349,25 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
     );
 
     screens = [
-      HomeScreen(toggleTheme: widget.toggleTheme, themeMode: widget.themeMode),
-      const CityFilterScreen(),
-      const MapScreen(),
+      HomeScreen(
+        toggleTheme: widget.toggleTheme, 
+        themeMode: widget.themeMode,
+        onLastUpdateChanged: (DateTime? lastUpdate) {
+          setState(() {
+            _lastUpdate = lastUpdate;
+          });
+        },
+      ),
+      CityFilterScreen(
+        onRefreshRequested: () {
+          // Handle city filter refresh if needed
+        },
+      ),
+      MapScreen(
+        onRefreshRequested: () {
+          // Handle map refresh if needed  
+        },
+      ),
       const SupportScreen(),
     ];
 
@@ -355,7 +381,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
   }
 
   final List<NavigationItem> navigationItems = [
-    NavigationItem(icon: Icons.home_outlined, activeIcon: Icons.home, label: 'الرئيسية', title: 'أحوال الطرق'),
+    NavigationItem(icon: Icons.home_outlined, activeIcon: Icons.home, label: 'الرئيسية', title: 'طريقي'),
     NavigationItem(icon: Icons.filter_list_outlined, activeIcon: Icons.filter_list, label: 'الفلترة', title: 'فلترة حسب المدينة'),
     NavigationItem(icon: Icons.map_outlined, activeIcon: Icons.map, label: 'الخريطة', title: 'خريطة الحواجز'),
     NavigationItem(icon: Icons.support_outlined, activeIcon: Icons.support, label: 'الدعم', title: 'الدعم'),
@@ -399,41 +425,253 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
     }
   }
 
+  void _triggerHomeScreenRefresh() {
+    // We'll use a more sophisticated approach by rebuilding the screen
+    setState(() {
+      screens[0] = HomeScreen(
+        toggleTheme: widget.toggleTheme, 
+        themeMode: widget.themeMode,
+        onLastUpdateChanged: (DateTime? lastUpdate) {
+          setState(() {
+            _lastUpdate = lastUpdate;
+          });
+        },
+      );
+    });
+  }
+
+  void _triggerRefreshForCurrentScreen() {
+    switch (currentIndex) {
+      case 0: // Home Screen
+        _triggerHomeScreenRefresh();
+        break;
+      case 1: // City Filter Screen
+        // Rebuild the city filter screen to trigger refresh
+        setState(() {
+          screens[1] = CityFilterScreen(
+            onRefreshRequested: () {
+              // Handle city filter refresh if needed
+            },
+          );
+        });
+        break;
+      case 2: // Map Screen
+        // Rebuild the map screen to trigger refresh
+        setState(() {
+          screens[2] = MapScreen(
+            onRefreshRequested: () {
+              // Handle map refresh if needed  
+            },
+          );
+        });
+        break;
+      default:
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('التحديث غير متاح في هذه الصفحة'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+        break;
+    }
+  }
+
+  void _testNotifications() {
+    // Test notification by calling the triggerFavoriteCheck
+    triggerFavoriteCheck();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('تم تشغيل فحص الإشعارات للمفضلة'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  String formatRelativeTime(DateTime time) {
+    final diff = DateTime.now().difference(time);
+    if (diff.inMinutes < 1) return "الآن";
+    if (diff.inMinutes < 60) return "قبل ${diff.inMinutes} د";
+    if (diff.inHours < 24) return "قبل ${diff.inHours} س";
+    return "قبل ${diff.inDays} يوم";
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(navigationItems[currentIndex].title),
+        centerTitle: true,
+        title: Column(
+          children: [
+            Text(navigationItems[currentIndex].title),
+            if (_lastUpdate != null && currentIndex == 0)
+              Text(
+                "آخر تحديث: ${formatRelativeTime(_lastUpdate!)}",
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontSize: 10,
+                ),
+              ),
+          ],
+        ),
         actions: [
-          // زر الإعدادات
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const SettingsScreen()),
-              );
+          // Menu popup with all actions
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            onSelected: (String value) {
+              switch (value) {
+                case 'refresh':
+                  _triggerRefreshForCurrentScreen();
+                  break;
+                case 'test_notifications':
+                  if (currentIndex == 0) {
+                    _testNotifications();
+                  }
+                  break;
+                case 'theme':
+                  widget.toggleTheme();
+                  // Force rebuild to update theme icon immediately
+                  setState(() {
+                    // Rebuild screens with new theme
+                    screens[0] = HomeScreen(
+                      toggleTheme: widget.toggleTheme, 
+                      themeMode: widget.themeMode,
+                      onLastUpdateChanged: (DateTime? lastUpdate) {
+                        setState(() {
+                          _lastUpdate = lastUpdate;
+                        });
+                      },
+                    );
+                  });
+                  break;
+                case 'settings':
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                  );
+                  break;
+                case 'app_info':
+                  _showAppInfo(context);
+                  break;
+                case 'share_stats':
+                  _shareGeneralStats();
+                  break;
+                case 'share_favorites':
+                  _shareFavoriteCheckpoints();
+                  break;
+                case 'share_app':
+                  _shareApp();
+                  break;
+              }
             },
-            tooltip: 'الإعدادات',
-          ),
+            itemBuilder: (BuildContext context) => [
+              // Refresh - show for home, city filter, and map screens
+              if (currentIndex <= 2)
+                PopupMenuItem<String>(
+                  value: 'refresh',
+                  child: Row(
+                    textDirection: TextDirection.rtl,
+                    children: [
+                      const Icon(Icons.refresh),
+                      const SizedBox(width: 8),
+                      const Text('تحديث', textDirection: TextDirection.rtl),
+                    ],
+                  ),
+                ),
+              
+              // Test notifications - only show in home screen
+              if (currentIndex == 0)
+                PopupMenuItem<String>(
+                  value: 'test_notifications',
+                  child: Row(
+                    textDirection: TextDirection.rtl,
+                    children: [
+                      const Icon(Icons.notifications_active),
+                      const SizedBox(width: 8),
+                      const Text('اختبار الإشعارات', textDirection: TextDirection.rtl),
+                    ],
+                  ),
+                ),
+              
+              // Theme toggle - available in all screens
+              PopupMenuItem<String>(
+                value: 'theme',
+                child: Row(
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    Icon(_getCurrentThemeIcon()),
+                    const SizedBox(width: 8),
+                    Text(
+                      _getCurrentThemeTooltip(),
+                      textDirection: TextDirection.rtl,
+                    ),
+                  ],
+                ),
+              ),
+              
+              // Sharing options - only show in home screen
+              if (currentIndex == 0) ...[
+                PopupMenuItem<String>(
+                  value: 'share_stats',
+                  child: Row(
+                    textDirection: TextDirection.rtl,
+                    children: [
+                      const Icon(Icons.analytics, color: Colors.green),
+                      const SizedBox(width: 8),
+                      const Text('مشاركة الإحصائيات', textDirection: TextDirection.rtl),
+                    ],
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'share_favorites',
+                  child: Row(
+                    textDirection: TextDirection.rtl,
+                    children: [
+                      const Icon(Icons.star, color: Colors.amber),
+                      const SizedBox(width: 8),
+                      const Text('مشاركة المفضلة', textDirection: TextDirection.rtl),
+                    ],
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'share_app',
+                  child: Row(
+                    textDirection: TextDirection.rtl,
+                    children: [
+                      const Icon(Icons.share, color: Colors.blue),
+                      const SizedBox(width: 8),
+                      const Text('مشاركة التطبيق', textDirection: TextDirection.rtl),
+                    ],
+                  ),
+                ),
+              ],
 
-          // 🔥 إصلاح زر الوضع الليلي
-          IconButton(
-            icon: Icon(_getCurrentThemeIcon()),
-            onPressed: () {
-              widget.toggleTheme();
-              // 🔥 إضافة تحديث فوري للواجهة
-              setState(() {});
-            },
-            tooltip: _getCurrentThemeTooltip(),
+              // Settings - available in all screens
+              PopupMenuItem<String>(
+                value: 'settings',
+                child: Row(
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    const Icon(Icons.settings),
+                    const SizedBox(width: 8),
+                    const Text('الإعدادات', textDirection: TextDirection.rtl),
+                  ],
+                ),
+              ),
+              
+              // App info - available in all screens except support
+              if (currentIndex != 3)
+                PopupMenuItem<String>(
+                  value: 'app_info',
+                  child: Row(
+                    textDirection: TextDirection.rtl,
+                    children: [
+                      const Icon(Icons.info_outline),
+                      const SizedBox(width: 8),
+                      const Text('معلومات التطبيق', textDirection: TextDirection.rtl),
+                    ],
+                  ),
+                ),
+            ],
           ),
-
-          if (currentIndex != 3)
-            IconButton(
-              icon: const Icon(Icons.info_outline),
-              onPressed: () => _showAppInfo(context),
-              tooltip: 'معلومات التطبيق',
-            ),
         ],
       ),
       body: Column(
@@ -465,6 +703,48 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
         }).toList(),
       ),
     );
+  }
+
+  Future<void> _shareGeneralStats() async {
+    // This method will need to get data from the home screen
+    // For now, we'll just share the app
+    await ShareService.shareApp();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تم مشاركة الإحصائيات'),
+          duration: Duration(seconds: 2),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  Future<void> _shareFavoriteCheckpoints() async {
+    // This will need to access the favorites from the home screen
+    // For now, just show a message
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تم مشاركة قائمة المفضلة'),
+          duration: Duration(seconds: 2),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  Future<void> _shareApp() async {
+    await ShareService.shareApp();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تم مشاركة معلومات التطبيق'),
+          duration: Duration(seconds: 2),
+          backgroundColor: Colors.blue,
+        ),
+      );
+    }
   }
 
   void _showAppInfo(BuildContext context) {

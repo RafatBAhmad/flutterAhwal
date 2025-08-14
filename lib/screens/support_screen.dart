@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'dart:async';
 import '../services/ad_helper.dart';
+import '../services/ad_click_protection.dart';
 import '../services/url_launcher_helper.dart';
 
 class SupportScreen extends StatefulWidget {
@@ -106,9 +107,19 @@ class _SupportScreenState extends State<SupportScreen> {
     );
   }
 
-  // 🔥 عرض الإعلان
-  void _showRewardedAd() {
+  // 🔥 عرض الإعلان مع حماية الكليكات
+  Future<void> _showRewardedAd() async {
+    // التحقق من حماية الكليكات
+    final canClick = await AdClickProtection.canClickAd();
+    if (!canClick) {
+      _showAdProtectionDialog();
+      return;
+    }
+
     if (_isRewardedAdLoaded && _rewardedAd != null) {
+      // تسجيل النقر على الإعلان
+      await AdClickProtection.recordAdClick();
+      
       _rewardedAd!.show(
         onUserEarnedReward: (AdWithoutView ad, RewardItem reward) {
           // 🎉 المستخدم حصل على المكافأة
@@ -205,6 +216,83 @@ class _SupportScreenState extends State<SupportScreen> {
               _showDonationDialog(context);
             },
             child: const Text('دعم إضافي'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 🔥 رسالة حماية الإعلانات
+  void _showAdProtectionDialog() {
+    final timeLeft = AdClickProtection.getTimeUntilNextAd();
+    final minutes = timeLeft ~/ 60;
+    final seconds = timeLeft % 60;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        title: const Row(
+          children: [
+            Icon(Icons.shield, color: Colors.orange, size: 28),
+            SizedBox(width: 8),
+            Text('حماية الإعلانات', textDirection: TextDirection.rtl),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+              ),
+              child: Column(
+                children: [
+                  const Icon(
+                    Icons.access_time,
+                    color: Colors.orange,
+                    size: 48,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'يمكنك مشاهدة إعلان آخر خلال:',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    textAlign: TextAlign.center,
+                    textDirection: TextDirection.rtl,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    minutes > 0 ? '$minutes دقيقة و $seconds ثانية' : '$seconds ثانية',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.orange,
+                    ),
+                    textAlign: TextAlign.center,
+                    textDirection: TextDirection.rtl,
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'هذا لحماية حساب الإعلانات من الحظر',
+                    style: TextStyle(fontSize: 14),
+                    textAlign: TextAlign.center,
+                    textDirection: TextDirection.rtl,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('موافق'),
           ),
         ],
       ),
@@ -625,9 +713,19 @@ class _SupportScreenState extends State<SupportScreen> {
     await prefs.setString('ad_stats', json.encode(adStats));
   }
 
-  // 🔥 دالة محسنة لعرض الإعلان
-  void _showRewardedAdWithTracking() {
+  // 🔥 دالة محسنة لعرض الإعلان مع حماية
+  Future<void> _showRewardedAdWithTracking() async {
+    // التحقق من حماية الكليكات
+    final canClick = await AdClickProtection.canClickAd();
+    if (!canClick) {
+      _trackAdInteraction('ad_blocked_protection');
+      _showAdProtectionDialog();
+      return;
+    }
+
     if (_isRewardedAdLoaded && _rewardedAd != null) {
+      // تسجيل النقر على الإعلان
+      await AdClickProtection.recordAdClick();
       _trackAdInteraction('ad_started');
 
       _rewardedAd!.show(

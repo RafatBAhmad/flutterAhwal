@@ -199,6 +199,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  void _testFavoriteNotification() async {
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'favorite_updates',
+      'Favorite Checkpoints Updates',
+      channelDescription: 'تحديثات الحواجز المفضلة',
+      importance: Importance.high,
+      priority: Priority.high,
+      styleInformation: BigTextStyleInformation(''),
+      enableVibration: true,
+      playSound: true,
+    );
+    const NotificationDetails platformDetails = NotificationDetails(android: androidDetails);
+
+    final FlutterLocalNotificationsPlugin notifications = FlutterLocalNotificationsPlugin();
+    final messenger = ScaffoldMessenger.of(context);
+
+    await notifications.show(
+      998,
+      '🔔 تحديث حالة حاجز مفضل',
+      'حاجز القدس تغير من مفتوح إلى مغلق\n(هذا تنبيه تجريبي)',
+      platformDetails,
+    );
+
+    if (vibrationEnabled) {
+      final hasVibrator = await Vibration.hasVibrator();
+      if (hasVibrator == true) {
+        Vibration.vibrate(duration: 500);
+      }
+    }
+
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('تم إرسال تنبيه تجريبي للحواجز المفضلة'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
   void _showAboutDialog() {
     showDialog(
       context: context,
@@ -331,6 +369,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               icon: Icons.notifications_active,
               trailing: const Icon(Icons.arrow_forward_ios),
               onTap: notificationsEnabled ? _testNotification : null,
+            ),
+            _buildSettingTile(
+              title: 'تجربة تنبيه الحواجز المفضلة',
+              subtitle: 'محاكاة تغيير حالة حاجز مفضل',
+              icon: Icons.favorite_border,
+              trailing: const Icon(Icons.arrow_forward_ios),
+              onTap: notificationsEnabled ? _testFavoriteNotification : null,
             ),
 
             // قسم التحديث

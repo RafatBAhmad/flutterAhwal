@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:flutter/foundation.dart';
 import '../services/ad_helper.dart';
+import '../services/ad_click_protection.dart';
 
 class BannerAdWidget extends StatefulWidget {
   const BannerAdWidget({super.key});
@@ -28,7 +29,7 @@ class _BannerAdWidgetState extends State<BannerAdWidget> {
     }
 
     _bannerAd = BannerAd(
-      adUnitId: AdHelper.getNativeAdId(), // 🔥 Ad Unit ID الصحيح
+      adUnitId: AdHelper.getBannerAdId(), // 🔥 Fixed: use banner ID, not native ID
       request: const AdRequest(),
       size: AdSize.banner,
       listener: BannerAdListener(
@@ -49,8 +50,16 @@ class _BannerAdWidgetState extends State<BannerAdWidget> {
             });
           }
         },
-        onAdOpened: (ad) {
+        onAdOpened: (ad) async {
           debugPrint('📱 Banner ad opened');
+          // Record ad click with protection
+          final canClick = await AdClickProtection.canClickAd();
+          if (canClick) {
+            await AdClickProtection.recordAdClick();
+            debugPrint('✅ Banner ad click recorded');
+          } else {
+            debugPrint('🚫 Banner ad click blocked by protection');
+          }
         },
         onAdClosed: (ad) {
           debugPrint('🔒 Banner ad closed');

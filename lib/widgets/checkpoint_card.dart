@@ -1,25 +1,38 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../models/checkpoint.dart';
-import '../utils/date_time_utils.dart';
 import '../services/share_service.dart';
+import '../services/cache_service.dart';
+import '../services/city_voting_service.dart';
+import '../utils/theme.dart';
 
 class CheckpointCard extends StatefulWidget {
   final Checkpoint checkpoint;
   final bool isFavorite;
   final VoidCallback onToggleFavorite;
-  final String relativeTime;
-  final IconData statusIcon;
+  final VoidCallback? onTap;
+  final bool showTimestamp;
+  final ThemeMode themeMode;
+  final bool isNew;
+  final bool isDetailed;
+  final bool showCityAndSource;
   final Color statusColor;
+  final IconData statusIcon;
+  final String relativeTime;
 
   const CheckpointCard({
     super.key,
     required this.checkpoint,
     required this.isFavorite,
     required this.onToggleFavorite,
-    required this.relativeTime,
-    required this.statusIcon,
     required this.statusColor,
+    required this.statusIcon,
+    required this.relativeTime,
+    this.onTap,
+    this.showTimestamp = true,
+    this.themeMode = ThemeMode.light,
+    this.isNew = false,
+    this.isDetailed = false,
+    this.showCityAndSource = false,
   });
 
   @override
@@ -27,463 +40,490 @@ class CheckpointCard extends StatefulWidget {
 }
 
 class _CheckpointCardState extends State<CheckpointCard> {
-  bool _isExpanded = false;
+  Map<String, int>? _customColors;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCustomColors();
+  }
+
+  Future<void> _loadCustomColors() async {
+    final customColors = await CacheService.getCustomColors();
+    if (mounted) {
+      setState(() {
+        _customColors = customColors;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (widget.checkpoint.effectiveAtDateTime == null ||
-        DateTime.now()
-            .difference(widget.checkpoint.effectiveAtDateTime!)
-            .inHours >
-            24) {
-      return const SizedBox.shrink();
-    }
+    final theme = Theme.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // تحديد لون الحالة والأيقونة
-    Color statusColor;
-    IconData statusIcon;
-    switch (widget.checkpoint.status.toLowerCase()) {
-      case 'مفتوح':
-      case 'سالكة':
-      case 'سالكه':
-      case 'سالك':
-        statusColor = Colors.green;
-        statusIcon = Icons.check_circle;
-        break;
-      case 'مغلق':
-        statusColor = Colors.red;
-        statusIcon = Icons.cancel;
-        break;
-      case 'ازدحام':
-        statusColor = Colors.orange;
-        statusIcon = Icons.warning;
-        break;
-      default:
-        statusColor = Colors.grey;
-        statusIcon = Icons.help;
-        break;
-    }
+    // Improved colors for both light and dark themes
+    final primaryColor = isDark ? theme.colorScheme.primary : const Color(0xFF9C4DCC);
+    final surfaceColor = isDark ? theme.colorScheme.surfaceContainerHighest : Colors.white;
+    final textColor = isDark ? theme.colorScheme.onSurface : const Color(0xFF1A1A1A);
+    final subtitleColor = isDark ? theme.colorScheme.onSurface.withValues(alpha: 0.7) : Colors.grey[600];
 
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      color: Theme.of(context).cardColor,
-      elevation: 2,
-      child: GestureDetector(
-        // 🔥 إضافة Long Press للمشاركة السريعة
-        onLongPress: () async {
-          // اهتزاز خفيف
-          HapticFeedback.mediumImpact();
-
-          // إظهار قائمة خيارات
-          final result = await showModalBottomSheet<String>(
-            context: context,
-            shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    return Container(
+      margin: EdgeInsets.only(bottom: widget.isDetailed ? 16 : 8),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: widget.onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            decoration: BoxDecoration(
+              color: surfaceColor,
+              borderRadius: BorderRadius.circular(12),
+              border: widget.isNew
+                  ? Border.all(color: primaryColor, width: 1.5)
+                  : Border.all(color: Colors.grey.withValues(alpha: 0.2), width: 0.5),
+              boxShadow: [
+                BoxShadow(
+                  color: isDark ? Colors.black26 : primaryColor.withValues(alpha: 0.1),
+                  blurRadius: widget.isNew ? 8 : 4,
+                  offset: const Offset(0, 2),
+                  spreadRadius: widget.isNew ? 1 : 0,
+                ),
+              ],
             ),
-            builder: (context) => Container(
+            child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
-                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    widget.checkpoint.name,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    textDirection: TextDirection.rtl,
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: statusColor.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: statusColor.withValues(alpha: 0.3)),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(statusIcon, size: 16, color: statusColor),
-                        const SizedBox(width: 6),
-                        Text(
-                          widget.checkpoint.status,
-                          style: TextStyle(
-                            color: statusColor,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
+                  // الصف الأول: اسم الحاجز + المفضلة + مشاركة
+                  Row(
+                    children: [
+                      // أيقونة الحالة
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: _getStatusColor().withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: _getStatusColor().withValues(alpha: 0.3),
+                            width: 1,
                           ),
                         ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  ListTile(
-                    leading: const Icon(Icons.share, color: Colors.blue),
-                    title: const Text('مشاركة الحاجز', textDirection: TextDirection.rtl),
-                    onTap: () => Navigator.pop(context, 'share'),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.copy, color: Colors.green),
-                    title: const Text('نسخ النص المصدر', textDirection: TextDirection.rtl),
-                    onTap: () => Navigator.pop(context, 'copy'),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.text_snippet, color: Colors.purple),
-                    title: const Text('مشاركة سريعة', textDirection: TextDirection.rtl),
-                    subtitle: const Text('الاسم والحالة فقط', textDirection: TextDirection.rtl),
-                    onTap: () => Navigator.pop(context, 'quick_share'),
-                  ),
-                  ListTile(
-                    leading: Icon(
-                      widget.isFavorite ? Icons.star : Icons.star_border,
-                      color: Colors.amber,
-                    ),
-                    title: Text(
-                      widget.isFavorite ? 'إزالة من المفضلة' : 'إضافة للمفضلة',
-                      textDirection: TextDirection.rtl,
-                    ),
-                    onTap: () => Navigator.pop(context, 'favorite'),
-                  ),
-                ],
-              ),
-            ),
-          );
-
-          // تنفيذ الإجراء المختار
-          if (result != null && mounted) {
-            switch (result) {
-              case 'share':
-                await ShareService.shareCheckpoint(widget.checkpoint);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('تم مشاركة تفاصيل الحاجز'),
-                      duration: Duration(seconds: 2),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
-                }
-                break;
-              case 'copy':
-                await ShareService.copyToClipboard(widget.checkpoint.sourceText);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('تم نسخ النص المصدر للحافظة'),
-                      duration: Duration(seconds: 2),
-                      backgroundColor: Colors.blue,
-                    ),
-                  );
-                }
-                break;
-              case 'quick_share':
-                await ShareService.shareQuickStatus(widget.checkpoint.name, widget.checkpoint.status);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('تم مشاركة الحالة بشكل سريع'),
-                      duration: Duration(seconds: 2),
-                      backgroundColor: Colors.purple,
-                    ),
-                  );
-                }
-                break;
-              case 'favorite':
-                widget.onToggleFavorite();
-                break;
-            }
-          }
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(12.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // الصف الأول: اسم الحاجز يمين + الأزرار يسار
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      widget.checkpoint.name,
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.bold),
-                      textDirection: TextDirection.rtl,
-                    ),
-                  ),
-                  // 🔥 زر المشاركة
-                  IconButton(
-                    icon: const Icon(Icons.share, size: 20),
-                    color: Colors.blue,
-                    onPressed: () async {
-                      HapticFeedback.lightImpact();
-                      await ShareService.shareCheckpoint(widget.checkpoint);
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('تم مشاركة تفاصيل الحاجز'),
-                            duration: Duration(seconds: 2),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
-                      }
-                    },
-                    tooltip: 'مشاركة الحاجز',
-                  ),
-                  // زر النجمة
-                  IconButton(
-                    icon: Icon(
-                      widget.isFavorite ? Icons.star : Icons.star_border,
-                      color: widget.isFavorite ? Colors.amber : Colors.grey,
-                      size: 20,
-                    ),
-                    onPressed: () {
-                      HapticFeedback.lightImpact();
-                      widget.onToggleFavorite();
-                    },
-                    tooltip: widget.isFavorite ? 'إزالة من المفضلة' : 'إضافة للمفضلة',
-                  ),
-                ].reversed.toList(), // ✅ عكسنا الترتيب
-              ),
-
-              const SizedBox(height: 6),
-
-              // الصف الثاني: المدينة + الحالة
-              Row(
-                children: [
-                  Icon(Icons.location_on, size: 16, color: Colors.grey[500]),
-                  const SizedBox(width: 4),
-                  Text(
-                    widget.checkpoint.city.isNotEmpty
-                        ? widget.checkpoint.city
-                        : 'غير محدد',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyMedium
-                        ?.copyWith(color: Colors.grey[500]),
-                    textDirection: TextDirection.rtl,
-                  ),
-                  const Spacer(),
-                  Container(
-                    padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: statusColor.withValues(alpha: (0.1)),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: statusColor, width: 1),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(statusIcon, size: 16, color: statusColor),
-                        const SizedBox(width: 4),
-                        Text(
-                          widget.checkpoint.status,
-                          style: TextStyle(
-                            color: statusColor,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
-                          ),
-                          textDirection: TextDirection.rtl,
+                        child: Icon(
+                          _getStatusIcon(),
+                          color: _getStatusColor(),
+                          size: 20,
                         ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+                      ),
 
-              const SizedBox(height: 8),
+                      const SizedBox(width: 12),
 
-              // النص المصدر يمين مع إمكانية التوسيع + تلوين الكلمات
-              if (widget.checkpoint.sourceText.isNotEmpty) ...[
-                Align(
-                  alignment: Alignment.centerRight, // ✅ النص يمين
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).brightness == Brightness.dark
-                          ? Colors.grey[900]
-                          : Colors.grey[100],
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.grey[700]!),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end, // ✅ النص يمين
-                      children: [
-                        RichText(
-                          textDirection: TextDirection.rtl,
-                          textAlign: TextAlign.right,
-                          maxLines: _isExpanded ? null : 3,
-                          overflow: _isExpanded
-                              ? TextOverflow.visible
-                              : TextOverflow.ellipsis,
-                          text: TextSpan(
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Colors.grey[300],
-                              height: 1.4,
+                      // اسم الحاجز
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.checkpoint.name,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: textColor,
+                              ),
+                              textDirection: TextDirection.rtl,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            children:
-                            _highlightText(widget.checkpoint.sourceText),
+
+                            if (widget.isDetailed || widget.showCityAndSource) ...[
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.location_on,
+                                    size: 14,
+                                    color: subtitleColor,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: widget.checkpoint.city == 'غير معروف' || widget.checkpoint.city.isEmpty
+                                        ? Row(
+                                            children: [
+                                              Text(
+                                                'مدينة غير محددة',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.orange[600],
+                                                  fontStyle: FontStyle.italic,
+                                                ),
+                                                textDirection: TextDirection.rtl,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              GestureDetector(
+                                                onTap: () => _showCityVotingDialog(context),
+                                                child: Container(
+                                                  padding: const EdgeInsets.symmetric(
+                                                    horizontal: 6,
+                                                    vertical: 2,
+                                                  ),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.blue.withValues(alpha: 0.1),
+                                                    borderRadius: BorderRadius.circular(8),
+                                                    border: Border.all(
+                                                      color: Colors.blue.withValues(alpha: 0.3),
+                                                    ),
+                                                  ),
+                                                  child: Row(
+                                                    mainAxisSize: MainAxisSize.min,
+                                                    children: [
+                                                      Icon(
+                                                        Icons.how_to_vote,
+                                                        size: 12,
+                                                        color: Colors.blue[700],
+                                                      ),
+                                                      const SizedBox(width: 4),
+                                                      Text(
+                                                        'اقترح',
+                                                        style: TextStyle(
+                                                          fontSize: 10,
+                                                          color: Colors.blue[700],
+                                                          fontWeight: FontWeight.bold,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          )
+                                        : Text(
+                                            widget.checkpoint.city,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: subtitleColor,
+                                            ),
+                                            textDirection: TextDirection.rtl,
+                                          ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+
+                      // إشارة الرسالة الجديدة
+                      if (widget.isNew) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: primaryColor.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            'جديد',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: primaryColor,
+                            ),
                           ),
                         ),
-                        if (_shouldShowExpandButton()) ...[
-                          const SizedBox(height: 4),
-                          InkWell(
-                            onTap: () =>
-                                setState(() => _isExpanded = !_isExpanded),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              mainAxisAlignment:
-                              MainAxisAlignment.end, // ✅ زر يمين
-                              children: [
-                                Text(
-                                  _isExpanded ? 'إظهار أقل' : 'إظهار المزيد',
+                        const SizedBox(width: 8),
+                      ],
+
+                      // زر المفضلة
+                      IconButton(
+                        onPressed: widget.onToggleFavorite,
+                        icon: Icon(
+                          widget.isFavorite ? Icons.favorite : Icons.favorite_border,
+                          color: widget.isFavorite ? Colors.red : Colors.grey[400],
+                          size: 22,
+                        ),
+                        tooltip: widget.isFavorite ? 'إزالة من المفضلة' : 'إضافة للمفضلة',
+                      ),
+
+                      // زر المشاركة
+                      IconButton(
+                        onPressed: () => _shareCheckpoint(context),
+                        icon: Icon(
+                          Icons.share,
+                          color: Colors.grey[600],
+                          size: 20,
+                        ),
+                        tooltip: 'مشاركة',
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  // الصف الثاني: الحالة + التوقيت
+                  Row(
+                    children: [
+                      // حالة الحاجز
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: _getStatusColor().withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: _getStatusColor().withValues(alpha: 0.3),
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _getStatusIcon(),
+                                color: _getStatusColor(),
+                                size: 16,
+                              ),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  widget.checkpoint.status,
                                   style: TextStyle(
-                                    color: Theme.of(context).primaryColor,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
+                                    color: _getStatusColor(),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                   textDirection: TextDirection.rtl,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                                const SizedBox(width: 4),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(width: 12),
+
+                      // التوقيت إذا كان مطلوباً
+                      if (widget.showTimestamp) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: isDark ? theme.colorScheme.surface : Colors.grey[100],
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.access_time,
+                                size: 12,
+                                color: subtitleColor,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _formatRelativeTime(),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: subtitleColor,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+
+                  // عرض النص المصدر إذا كان متوفراً ومطلوباً
+                  if (widget.showCityAndSource && widget.checkpoint.sourceText.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: isDark ? theme.colorScheme.surface.withValues(alpha: 0.5) : Colors.grey[50],
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: isDark ? theme.colorScheme.outline.withValues(alpha: 0.3) : Colors.grey.withValues(alpha: 0.2),
+                          width: 1,
+                        ),
+                      ),
+                      child: Text(
+                        widget.checkpoint.sourceText,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: subtitleColor,
+                          height: 1.3,
+                        ),
+                        textDirection: TextDirection.rtl,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+
+                  // معلومات إضافية للعرض المفصل
+                  if (widget.isDetailed) ...[
+                    const SizedBox(height: 12),
+                    const Divider(height: 1),
+                    const SizedBox(height: 8),
+
+                    // معلومات إضافية
+                    if (widget.checkpoint.sourceText.isNotEmpty) ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: isDark ? theme.colorScheme.surface.withValues(alpha: 0.5) : Colors.grey[50],
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: isDark ? theme.colorScheme.outline.withValues(alpha: 0.3) : Colors.grey.withValues(alpha: 0.2),
+                            width: 1,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
                                 Icon(
-                                  _isExpanded
-                                      ? Icons.expand_less
-                                      : Icons.expand_more,
-                                  color: Theme.of(context).primaryColor,
+                                  Icons.info_outline,
                                   size: 16,
+                                  color: subtitleColor,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'معلومات إضافية:',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: subtitleColor,
+                                  ),
                                 ),
                               ],
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              widget.checkpoint.sourceText,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: subtitleColor,
+                                height: 1.4,
+                              ),
+                              textDirection: TextDirection.rtl,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+
+                    // تواريخ مفصلة
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        if (widget.checkpoint.effectiveAt != null) ...[
+                          Icon(
+                            Icons.schedule,
+                            size: 14,
+                            color: subtitleColor,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'آخر تحديث: ${_formatDetailedTime(widget.checkpoint.effectiveAtDateTime)}',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: subtitleColor,
                             ),
                           ),
                         ],
                       ],
                     ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-              ],
-
-              // التاريخ يمين + زر نسخ النص
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // زر نسخ النص المصدر (يسار)
-                  if (widget.checkpoint.sourceText.isNotEmpty)
-                    TextButton.icon(
-                      onPressed: () async {
-                        HapticFeedback.lightImpact();
-                        await ShareService.copyToClipboard(widget.checkpoint.sourceText);
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('تم نسخ النص المصدر للحافظة'),
-                              duration: Duration(seconds: 2),
-                              backgroundColor: Colors.blue,
-                            ),
-                          );
-                        }
-                      },
-                      icon: const Icon(Icons.copy, size: 14),
-                      label: const Text('نسخ النص', style: TextStyle(fontSize: 11)),
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        minimumSize: const Size(0, 0),
-                      ),
-                    ),
-
-                  // التاريخ (يمين)
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.access_time, size: 14, color: Colors.grey[500]),
-                      const SizedBox(width: 4),
-                      Text(
-                        DateTimeUtils.formatCheckpointDate(
-                            widget.checkpoint.effectiveAtDateTime),
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.grey[500],
-                          fontSize: 12,
-                        ),
-                        textDirection: TextDirection.rtl,
-                        textAlign: TextAlign.right,
-                      ),
-                    ],
-                  ),
+                  ],
                 ],
               ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  bool _shouldShowExpandButton() {
-    if (widget.checkpoint.sourceText.isEmpty) return false;
-    final textPainter = TextPainter(
-      text: TextSpan(
-        text: widget.checkpoint.sourceText,
-        style: Theme.of(context)
-            .textTheme
-            .bodySmall
-            ?.copyWith(color: Colors.grey[700], height: 1.3),
-      ),
-      maxLines: 3,
-      textDirection: TextDirection.rtl,
-    );
-    textPainter.layout(maxWidth: MediaQuery.of(context).size.width - 64);
-    return textPainter.didExceedMaxLines;
+  Color _getStatusColor() {
+    return AppTheme.getStatusColor(widget.checkpoint.status, customColors: _customColors);
   }
 
-  /// 🔹 دالة تلوين الكلمات المهمة
-  List<TextSpan> _highlightText(String text) {
-    final words = text.split(' ');
-    return words.map((word) {
-      if (word.contains('مغلق') || word.contains('XXX')) {
-        return TextSpan(
-          text: '$word ',
-          style:
-          const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
-        );
-      } else if (word.contains('مفتوح') ||
-          word.contains('سالكة') ||
-          word.contains('سالكه') ||
-          word.contains('سالك')) {
-        return TextSpan(
-          text: '$word ',
-          style: const TextStyle(
-              color: Colors.green, fontWeight: FontWeight.bold),
-        );
-      } else if (word.contains('ازدحام') ||
-          word.contains('كثافة سير') ||
-          word.contains('ازمة') ||
-          word.contains('أزمة') ||
-          word.contains('تفتيش') ||
-          word.contains('الحادث') ||
-          word.contains('حادث') ||
-          word.contains('اصطدام') ||
-          word.contains('إصطدام')) {
-        return TextSpan(
-          text: '$word ',
-          style: const TextStyle(
-              color: Colors.orange, fontWeight: FontWeight.bold),
-        );
-      } else {
-        return TextSpan(text: '$word ');
-      }
-    }).toList();
+  IconData _getStatusIcon() {
+    return AppTheme.getStatusIcon(widget.checkpoint.status);
+  }
+
+  String _formatRelativeTime() {
+    final effectiveDate = widget.checkpoint.effectiveAtDateTime ?? widget.checkpoint.updatedAtDateTime;
+    if (effectiveDate == null) return 'غير معروف';
+
+    return _formatTimeWithRelative(effectiveDate);
+  }
+
+  String _formatTimeWithRelative(DateTime dateTime) {
+    final timeStr = '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    String relativeStr;
+    if (difference.inMinutes < 1) {
+      relativeStr = 'الآن';
+    } else if (difference.inMinutes < 60) {
+      relativeStr = 'منذ ${difference.inMinutes}د';
+    } else if (difference.inHours < 24) {
+      relativeStr = 'منذ ${difference.inHours}س';
+    } else if (difference.inDays == 1) {
+      relativeStr = 'أمس';
+    } else if (difference.inDays < 7) {
+      relativeStr = 'منذ ${difference.inDays}ي';
+    } else {
+      relativeStr = '${dateTime.day}/${dateTime.month}';
+    }
+
+    return '$timeStr ($relativeStr)';
+  }
+
+  String _formatDetailedTime(DateTime? dateTime) {
+    if (dateTime == null) return 'غير معروف';
+
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    if (difference.inDays < 1) {
+      return '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+    } else {
+      return '${dateTime.day}/${dateTime.month}/${dateTime.year} ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+    }
+  }
+
+  void _shareCheckpoint(BuildContext context) {
+    ShareService.shareCheckpoint(widget.checkpoint);
+
+    // عرض رسالة تأكيد
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('تم نسخ معلومات ${widget.checkpoint.name}'),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+    );
+  }
+
+  void _showCityVotingDialog(BuildContext context) async {
+    final deviceId = await CityVotingService.getDeviceId();
+    if (context.mounted) {
+      CityVotingService.showCityVotingDialog(
+        context,
+        widget.checkpoint,
+        deviceId,
+      );
+    }
   }
 }

@@ -11,15 +11,20 @@ import '../widgets/nativ_ad_card.dart';
 import '../services/cache_service.dart';
 import '../services/share_service.dart';
 import '../widgets/checkpoint_card.dart';
+import '../widgets/checkpoint_history_dialog.dart';
+import '../services/city_voting_service.dart';
+import '../services/checkpoint_history_service.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback toggleTheme;
   final ThemeMode themeMode;
+  final Function(DateTime?)? onLastUpdateChanged;
 
   const HomeScreen({
     super.key,
     required this.toggleTheme,
     required this.themeMode,
+    this.onLastUpdateChanged,
   });
 
   @override
@@ -56,6 +61,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = "";
   bool _showOnlyFavorites = false;
+  Set<String> _activeFilters = {}; // مجموعة الفلاتر النشطة
   List<String>? _quickStatusFilter;
 
   // 🔥 الميزة الجديدة: التبديل بين عرض جميع الرسائل أو آخر حالة فقط
@@ -280,10 +286,26 @@ class _HomeScreenState extends State<HomeScreen> {
           // تحميل حسب المدينة المختارة
           data = await ApiService.getCheckpointsByCity(selectedCity);
         } else {
-          // 🔥 تحميل بناء على الإعداد: جميع الرسائل أم آخر حالة فقط
-          data = _showAllMessages
-              ? await ApiService.getAllCheckpoints() // جميع الرسائل
-              : await ApiService.getLatestCheckpointsOnly(); // آخر حالة فقط
+          // Use the same strategy as city filter screen for faster updates
+          try {
+            // محاولة جلب جميع الرسائل أولاً
+            data = await ApiService.getAllCheckpoints();
+            debugPrint('✅ HomeScreen: getAllCheckpoints نجح - ${data.length} رسالة');
+          } catch (e) {
+            debugPrint('❌ HomeScreen: getAllCheckpoints فشل: $e');
+
+            try {
+              // fallback للطريقة البديلة
+              data = await ApiService.getLatestCheckpointsOnly();
+              debugPrint('✅ HomeScreen: getLatestCheckpointsOnly نجح');
+            } catch (e2) {
+              debugPrint('❌ HomeScreen: getLatestCheckpointsOnly فشل: $e2');
+
+              // fallback أخير
+              data = await ApiService.fetchLatestOnly();
+              debugPrint('✅ HomeScreen: fetchLatestOnly نجح');
+            }
+          }
         }
 
         // حفظ في الكاش
@@ -294,15 +316,23 @@ class _HomeScreenState extends State<HomeScreen> {
 
       detectChanges(data ?? []);
 
+      // Record checkpoint history for all fetched checkpoints
+      if (data != null && data.isNotEmpty) {
+        await CheckpointHistoryService.recordMultipleCheckpoints(data);
+      }
+
       setState(() {
         allCheckpoints = data ?? [];
         _isLoading = false;
+        // Apply city voting results asynchronously
+        _applyCityVotingResults();
+        
         cities = [
           "الكل",
           ...allCheckpoints
               .map((cp) => cp.city)
               .toSet()
-              .where((c) => c != "غير معروف"),
+              .where((c) => c != "غير معروف" && c.isNotEmpty),
         ];
 
         final List<Checkpoint> displayedNow = getFilteredCheckpoints();
@@ -314,6 +344,16 @@ class _HomeScreenState extends State<HomeScreen> {
           newItemsCount = displayedNow.length - lastDisplayed.length;
         }
         lastDisplayed = displayedNow;
+        
+        // إرسال آخر تحديث إلى الـ AppBar العام
+        final latestUpdate = displayedNow
+            .where((c) => c.effectiveAtDateTime != null)
+            .map((c) => c.effectiveAtDateTime!)
+            .fold<DateTime?>(
+          null,
+              (prev, el) => prev == null || el.isAfter(prev) ? el : prev,
+        );
+        widget.onLastUpdateChanged?.call(latestUpdate);
       });
 
       if (_newMessagesCount > 0 && showToast) {
@@ -323,9 +363,8 @@ class _HomeScreenState extends State<HomeScreen> {
       if (showToast) {
         HapticFeedback.lightImpact();
 
-        final modeText = _showAllMessages ? "جميع الرسائل" : "آخر حالة فقط";
         Fluttertoast.showToast(
-          msg: "✅ تم تحديث البيانات (${allCheckpoints.length} حاجز) - $modeText",
+          msg: "✅ تم تحديث البيانات (${allCheckpoints.length} حاجز)",
           toastLength: Toast.LENGTH_SHORT,
           gravity: ToastGravity.BOTTOM,
         );
@@ -371,6 +410,9 @@ class _HomeScreenState extends State<HomeScreen> {
               Vibration.vibrate(duration: 200);
             }
           });
+          
+          // Record the status change in history
+          CheckpointHistoryService.recordStatusChange(cp);
         }
         lastFavoriteStatuses[cp.id] = cp.status;
       }
@@ -395,11 +437,47 @@ class _HomeScreenState extends State<HomeScreen> {
           .toList();
     }
 
-    if (_showOnlyFavorites) {
+    // Apply active filters
+    if (_activeFilters.isNotEmpty) {
+      List<Checkpoint> results = [];
+      
+      // إذا كان فلتر المفضلة مفعل
+      if (_activeFilters.contains('favorites')) {
+        var favoriteFiltered = filtered.where((cp) => favoriteIds.contains(cp.id));
+        results.addAll(favoriteFiltered);
+      }
+      
+      // فلاتر الحالة
+      List<String> statusesToShow = [];
+      if (_activeFilters.contains('open')) {
+        statusesToShow.addAll(['مفتوح', 'سالكة', 'سالكه', 'سالك']);
+      }
+      if (_activeFilters.contains('closed')) {
+        statusesToShow.add('مغلق');
+      }
+      if (_activeFilters.contains('congestion')) {
+        statusesToShow.add('ازدحام');
+      }
+      
+      if (statusesToShow.isNotEmpty) {
+        var statusFiltered = filtered.where((cp) =>
+            statusesToShow.any((status) =>
+                cp.status.toLowerCase().contains(status.toLowerCase())
+            )
+        );
+        results.addAll(statusFiltered);
+      }
+      
+      // إزالة المكررات وإرجاع النتائج
+      filtered = results.toSet().toList();
+    }
+
+    // Fallback to old logic for compatibility
+    if (_showOnlyFavorites && _activeFilters.isEmpty) {
       filtered = filtered.where((cp) => favoriteIds.contains(cp.id)).toList();
     }
 
-    if (_quickStatusFilter != null) {
+    if (_quickStatusFilter != null && _activeFilters.isEmpty) {
       filtered = filtered.where((cp) =>
           _quickStatusFilter!.any((status) =>
               cp.status.toLowerCase().contains(status.toLowerCase())
@@ -408,9 +486,21 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     filtered.sort((a, b) {
+      // أولوية للمفضلة
       if (favoriteIds.contains(a.id) && !favoriteIds.contains(b.id)) return -1;
       if (!favoriteIds.contains(a.id) && favoriteIds.contains(b.id)) return 1;
 
+      // ثم ترتيب حسب التاريخ (الأحدث أولاً) بغض النظر عن الحالة
+      if (a.effectiveAtDateTime != null && b.effectiveAtDateTime != null) {
+        return b.effectiveAtDateTime!.compareTo(a.effectiveAtDateTime!);
+      }
+      
+      // إذا لم يكن هناك تاريخ فعال، نستخدم تاريخ التحديث
+      if (a.updatedAtDateTime != null && b.updatedAtDateTime != null) {
+        return b.updatedAtDateTime!.compareTo(a.updatedAtDateTime!);
+      }
+      
+      // في النهاية، ترتيب حسب الحالة كمعيار أخير إذا لم تكن هناك تواريخ
       final statusPriority = {
         'مغلق': 0,
         'ازدحام': 1,
@@ -421,12 +511,7 @@ class _HomeScreenState extends State<HomeScreen> {
       };
       final aPriority = statusPriority[a.status] ?? 3;
       final bPriority = statusPriority[b.status] ?? 3;
-      if (aPriority != bPriority) return aPriority.compareTo(bPriority);
-
-      if (a.effectiveAtDateTime != null && b.effectiveAtDateTime != null) {
-        return b.effectiveAtDateTime!.compareTo(a.effectiveAtDateTime!);
-      }
-      return 0;
+      return aPriority.compareTo(bPriority);
     });
 
     return filtered;
@@ -508,44 +593,83 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildQuickFilterButton(String label, List<String>? statuses) {
-    final isSelected = (_quickStatusFilter == statuses) ||
-        (statuses == null && _quickStatusFilter == null);
-
+  Widget _buildQuickFilterButton(String label, String filterId) {
+    bool isSelected = _activeFilters.contains(filterId);
+    
     Color color;
-    if (statuses == null) {
-      color = Colors.grey;
-    } else if (statuses.contains('مفتوح') || statuses.contains('سالكة')) {
-      color = Colors.green;
-    } else if (statuses.contains('مغلق')) {
-      color = Colors.red;
-    } else {
-      color = Colors.orange;
+    switch (filterId) {
+      case 'all':
+        color = Colors.grey;
+        break;
+      case 'favorites':
+        color = Colors.amber;
+        break;
+      case 'closed':
+        color = Colors.red;
+        break;
+      case 'congestion':
+        color = Colors.orange;
+        break;
+      case 'open':
+        color = Colors.green;
+        break;
+      default:
+        color = Colors.grey;
     }
 
     return Expanded(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 2),
-        child: ElevatedButton(
-          onPressed: () {
-            setState(() {
-              _quickStatusFilter = statuses;
-            });
-          },
-          style: ElevatedButton.styleFrom(
-            backgroundColor: isSelected ? color : Colors.transparent,
-            foregroundColor: isSelected ? Colors.white : color,
-            side: BorderSide(color: color),
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-          ),
-          child: Text(
-            label,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: () {
+              setState(() {
+                if (filterId == 'all') {
+                  // إذا كان "المفضلة" (الكل سابقاً)، مسح جميع الفلاتر
+                  _activeFilters.clear();
+                  _showOnlyFavorites = false;
+                  _quickStatusFilter = null;
+                } else {
+                  // تبديل الفلتر
+                  if (_activeFilters.contains(filterId)) {
+                    _activeFilters.remove(filterId);
+                  } else {
+                    _activeFilters.add(filterId);
+                  }
+                  
+                  // تحديث المتغيرات القديمة للتوافق
+                  _showOnlyFavorites = _activeFilters.contains('favorites');
+                  
+                  // تحديث فلتر الحالة
+                  List<String> statusFilters = [];
+                  if (_activeFilters.contains('closed')) statusFilters.add('مغلق');
+                  if (_activeFilters.contains('congestion')) statusFilters.add('ازدحام');
+                  if (_activeFilters.contains('open')) {
+                    statusFilters.addAll(['مفتوح', 'سالكة', 'سالكه', 'سالك']);
+                  }
+                  
+                  _quickStatusFilter = statusFilters.isEmpty ? null : statusFilters;
+                }
+              });
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: isSelected ? color : Colors.transparent,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: color),
+              ),
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: isSelected ? Colors.white : color,
+                ),
+              ),
             ),
           ),
         ),
@@ -626,365 +750,40 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  void _showFilterDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('خيارات الفلترة', textDirection: TextDirection.rtl),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SwitchListTile(
-              title: const Text(
-                'عرض المفضلة فقط',
-                textDirection: TextDirection.rtl,
-              ),
-              value: _showOnlyFavorites,
-              onChanged: (value) {
-                setState(() => _showOnlyFavorites = value);
-                Navigator.pop(context);
-              },
-            ),
-            SwitchListTile(
-              title: const Text(
-                'التحديث التلقائي',
-                textDirection: TextDirection.rtl,
-              ),
-              subtitle: Text(
-                _isAutoRefreshEnabled ? 'كل 5 دقائق' : 'متوقف',
-                textDirection: TextDirection.rtl,
-              ),
-              value: _isAutoRefreshEnabled,
-              onChanged: (value) {
-                toggleAutoRefresh();
-                Navigator.pop(context);
-              },
-            ),
-            // 🔥 خيار عرض الرسائل الجديد
-            SwitchListTile(
-              title: const Text(
-                'عرض جميع الرسائل',
-                textDirection: TextDirection.rtl,
-              ),
-              subtitle: Text(
-                _showAllMessages ? 'جميع الرسائل والتحديثات' : 'آخر حالة فقط',
-                textDirection: TextDirection.rtl,
-              ),
-              value: _showAllMessages,
-              onChanged: (value) async {
-                Navigator.pop(context);
-                await _toggleShowAllMessages();
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('إغلاق'),
-          ),
-        ],
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
     final displayed = getFilteredCheckpoints();
 
-    DateTime? latestUpdate = displayed
-        .where((c) => c.effectiveAtDateTime != null)
-        .map((c) => c.effectiveAtDateTime!)
-        .fold<DateTime?>(
-      null,
-          (prev, el) => prev == null || el.isAfter(prev) ? el : prev,
-    );
-
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_showAllMessages ? "جميع التحديثات" : "آخر حالة"),
-        actions: [
-          // 🔥 زر تبديل وضع عرض الرسائل
-          IconButton(
-            icon: Icon(
-              _showAllMessages ? Icons.history : Icons.fiber_new,
-              color: _showAllMessages ? Colors.blue : Colors.green,
-            ),
-            tooltip: _showAllMessages ? 'عرض آخر حالة فقط' : 'عرض جميع الرسائل',
-            onPressed: _toggleShowAllMessages,
-          ),
-          IconButton(
-            icon: const Icon(Icons.filter_list),
-            tooltip: 'خيارات الفلترة',
-            onPressed: _showFilterDialog,
-          ),
-          IconButton(
-            icon: Icon(
-              notificationsEnabled
-                  ? Icons.notifications_active
-                  : Icons.notifications_off,
-              color: notificationsEnabled ? Colors.amber : Colors.grey,
-            ),
-            tooltip: notificationsEnabled
-                ? 'إيقاف التنبيهات'
-                : 'تشغيل التنبيهات',
-            onPressed: () async {
-              final prefs = await SharedPreferences.getInstance();
-              setState(() {
-                notificationsEnabled = !notificationsEnabled;
-              });
-              await prefs.setBool(
-                'notifications_enabled',
-                notificationsEnabled,
-              );
-
-              final hasVibrator = await Vibration.hasVibrator();
-              if (notificationsEnabled && hasVibrator == true) {
-                Vibration.vibrate(duration: 100);
-              }
-
-              Fluttertoast.showToast(
-                msg: notificationsEnabled
-                    ? "🔔 تم تفعيل التنبيهات"
-                    : "🔕 تم إيقاف التنبيهات",
-              );
-            },
-          ),
-          // 🔥 زر مشاركة الإحصائيات
-          IconButton(
-            icon: const Icon(Icons.share),
-            tooltip: 'مشاركة إحصائيات',
-            onPressed: () async {
-              HapticFeedback.lightImpact();
-              final openCount = _countByStatus(displayed, ['مفتوح', 'سالكة', 'سالكه', 'سالك']);
-              final closedCount = _countByStatus(displayed, ['مغلق']);
-              final congestionCount = _countByStatus(displayed, ['ازدحام']);
-
-              await ShareService.shareGeneralStats(
-                displayed.length,
-                openCount,
-                closedCount,
-                congestionCount,
-              );
-
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('تم مشاركة الإحصائيات'),
-                    duration: Duration(seconds: 2),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              }
-
-              Fluttertoast.showToast(
-                msg: "تم مشاركة الإحصائيات",
-                toastLength: Toast.LENGTH_SHORT,
-              );
-            },
-          ),
-          // 🔥 قائمة المزيد
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
-            tooltip: 'المزيد',
-            onSelected: (value) async {
-              switch (value) {
-                case 'share_favorites':
-                  final favoriteCheckpoints = displayed.where((cp) => favoriteIds.contains(cp.id)).toList();
-                  if (favoriteCheckpoints.isNotEmpty) {
-                    await ShareService.shareFavoriteCheckpoints(favoriteCheckpoints);
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('تم مشاركة قائمة المفضلة'),
-                          duration: Duration(seconds: 2),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    }
-                  } else {
-                    Fluttertoast.showToast(msg: "لا توجد حواجز مفضلة");
-                  }
-                  break;
-                case 'share_city':
-                  if (selectedCity != "الكل") {
-                    final cityCheckpoints = displayed;
-                    final openCount = _countByStatus(cityCheckpoints, ['مفتوح', 'سالكة', 'سالكه', 'سالك']);
-                    final closedCount = _countByStatus(cityCheckpoints, ['مغلق']);
-                    final congestionCount = _countByStatus(cityCheckpoints, ['ازدحام']);
-
-                    await ShareService.shareCityStats(selectedCity, openCount, closedCount, congestionCount);
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('تم مشاركة إحصائيات $selectedCity'),
-                          duration: const Duration(seconds: 2),
-                          backgroundColor: Colors.blue,
-                        ),
-                      );
-                    }
-                  } else {
-                    Fluttertoast.showToast(msg: "اختر مدينة محددة أولاً");
-                  }
-                  break;
-                case 'share_app':
-                  await ShareService.shareApp();
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('تم مشاركة معلومات التطبيق'),
-                        duration: Duration(seconds: 2),
-                        backgroundColor: Colors.blue,
-                      ),
-                    );
-                  }
-                  break;
-              }
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'share_favorites',
-                child: Row(
-                  children: [
-                    Icon(Icons.star, color: Colors.amber, size: 20),
-                    SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'مشاركة المفضلة',
-                        textDirection: TextDirection.rtl,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (selectedCity != "الكل")
-                PopupMenuItem(
-                  value: 'share_city',
-                  child: Row(
-                    children: [
-                      const Icon(Icons.location_city, color: Colors.green, size: 20),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'مشاركة إحصائيات $selectedCity',
-                          textDirection: TextDirection.rtl,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              const PopupMenuItem(
-                value: 'share_app',
-                child: Row(
-                  children: [
-                    Icon(Icons.app_shortcut, color: Colors.blue, size: 20),
-                    SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'مشاركة التطبيق',
-                        textDirection: TextDirection.rtl,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : Stack(
         children: [
           Column(
             children: [
-              // 🔥 شريط المعلومات مع مؤشر الوضع
+              // أزرار الفلتر المبسطة
               Container(
-                padding: const EdgeInsets.all(8.0),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
-                  border: Border(
-                    bottom: BorderSide(
-                      color: _showAllMessages ? Colors.blue.withValues(alpha: 0.3) : Colors.green.withValues(alpha: 0.3),
-                      width: 2,
-                    ),
-                  ),
-                ),
-                child: Column(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        if (latestUpdate != null)
-                          Text(
-                            "آخر تحديث: ${formatRelativeTime(latestUpdate)}",
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        Row(
-                          children: [
-                            // 🔥 مؤشر الوضع الحالي
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: _showAllMessages ? Colors.blue.withValues(alpha: 0.1) : Colors.green.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: _showAllMessages ? Colors.blue.withValues(alpha: 0.3) : Colors.green.withValues(alpha: 0.3),
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    _showAllMessages ? Icons.history : Icons.fiber_new,
-                                    size: 12,
-                                    color: _showAllMessages ? Colors.blue : Colors.green,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    _showAllMessages ? "جميع الرسائل" : "آخر حالة",
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: _showAllMessages ? Colors.blue : Colors.green,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              "${displayed.length} حاجز",
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          _buildQuickFilterButton('الكل', null),
-                          _buildQuickFilterButton('سالك', ['مفتوح', 'سالكة', 'سالكه', 'سالك']),
-                          _buildQuickFilterButton('مغلق', ['مغلق']),
-                          _buildQuickFilterButton('ازدحام', ['ازدحام']),
-                        ],
-                      ),
-                    ),
+                    _buildQuickFilterButton('المفضلة', 'all'),
+                    _buildQuickFilterButton('سالك', 'open'),
+                    _buildQuickFilterButton('مغلق', 'closed'),
+                    _buildQuickFilterButton('ازدحام', 'congestion'),
                   ],
                 ),
               ),
 
+              // Search Section Only
               Padding(
                 padding: const EdgeInsets.all(8.0),
                 child: TextField(
                   controller: _searchController,
                   textDirection: TextDirection.rtl,
                   decoration: InputDecoration(
-                    hintText: 'البحث في الحواجز...',
+                    hintText: 'البحث في الحواجز والمدن...',
                     hintTextDirection: TextDirection.rtl,
                     prefixIcon: const Icon(Icons.search),
                     suffixIcon: _searchQuery.isNotEmpty
@@ -1009,56 +808,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        value: selectedCity,
-                        decoration: InputDecoration(
-                          labelText: 'المدينة',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                        items: cities.map((city) {
-                          return DropdownMenuItem(
-                            value: city,
-                            child: Text(city, textDirection: TextDirection.rtl),
-                          );
-                        }).toList(),
-                        onChanged: (value) {
-                          setState(() {
-                            selectedCity = value!;
-                            newItemsCount = 0;
-                            _newMessagesCount = 0;
-                          });
-                          if (value != "الكل") {
-                            CacheService.trackCityView(value!);
-                          }
-                          // إعادة تحميل البيانات عند تغيير المدينة
-                          fetchCheckpoints(showToast: false);
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      icon: Icon(
-                        _showOnlyFavorites ? Icons.star : Icons.star_border,
-                        color: _showOnlyFavorites ? Colors.amber : Colors.grey,
-                      ),
-                      tooltip: 'عرض المفضلة فقط',
-                      onPressed: () {
-                        setState(
-                              () => _showOnlyFavorites = !_showOnlyFavorites,
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ),
-
               const SizedBox(height: 8),
 
               Expanded(
@@ -1067,14 +816,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
-                        _showAllMessages ? Icons.search_off : Icons.fiber_new,
+                      const Icon(
+                        Icons.search_off,
                         size: 64,
-                        color: Colors.grey[400],
+                        color: Colors.grey,
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        _showAllMessages ? 'لا توجد نتائج' : 'لا توجد تحديثات جديدة',
+                        'لا توجد نتائج',
                         style: Theme.of(context)
                             .textTheme
                             .titleMedium
@@ -1083,9 +832,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        _showAllMessages
-                            ? 'جرب تغيير معايير البحث أو الفلترة'
-                            : 'اضغط على زر التاريخ لعرض جميع الرسائل',
+                        'جرب تغيير معايير البحث أو الفلترة',
                         style: Theme.of(context)
                             .textTheme
                             .bodyMedium
@@ -1121,7 +868,10 @@ class _HomeScreenState extends State<HomeScreen> {
                           : 'غير محدد';
 
                       return GestureDetector(
-                        onTap: () => _markAsRead(checkpointIndex),
+                        onTap: () {
+                          _markAsRead(checkpointIndex);
+                          _showCheckpointHistory(checkpoint);
+                        },
                         child: Column(
                           children: [
                             if (_lastReadIndex != null &&
@@ -1166,6 +916,9 @@ class _HomeScreenState extends State<HomeScreen> {
                               statusColor: getStatusColor(checkpoint.status),
                               statusIcon: getStatusIcon(checkpoint.status),
                               relativeTime: relativeTime,
+                              themeMode: widget.themeMode,
+                              showCityAndSource: true,
+                              onTap: () => _showCheckpointHistory(checkpoint),
                             ),
                           ],
                         ),
@@ -1196,21 +949,68 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (_showScrollToTop)
                   const SizedBox(height: 8),
 
-                // الزر جديد  - يبقى ظاهراً دائماً إذا كان هناك رسائل جديدة
-                if (_newMessagesCount > 0)
-                  FloatingActionButton.extended(
-                    heroTag: "new_messages",
-                    onPressed: scrollToNewMessages,
-                    icon: const Icon(Icons.mark_as_unread),
-                    label: Text('جديد $_newMessagesCount'),
-                    backgroundColor: Theme.of(context).primaryColor,
-                    foregroundColor: Colors.white,
-                  ),
+                // New messages button removed as requested
               ],
             ),
           ),
         ],
       ),
     );
+  }
+
+  void _showCheckpointHistory(Checkpoint checkpoint) {
+    showDialog(
+      context: context,
+      builder: (context) => CheckpointHistoryDialog(
+        checkpoint: checkpoint,
+      ),
+    );
+  }
+
+  // Apply city voting results asynchronously
+  Future<void> _applyCityVotingResults() async {
+    final Map<String, String> votedCities = {};
+    
+    // Get voted cities for checkpoints with unknown locations
+    for (final cp in allCheckpoints) {
+      if (cp.city == "غير معروف" || cp.city.isEmpty) {
+        final votedCity = await CityVotingService.getMostVotedCity(cp.id);
+        if (votedCity != null) {
+          votedCities[cp.id] = votedCity;
+        }
+      }
+    }
+    
+    // Apply voted cities to checkpoints
+    if (votedCities.isNotEmpty && mounted) {
+      setState(() {
+        for (final cp in allCheckpoints) {
+          if (votedCities.containsKey(cp.id)) {
+            // Create a new checkpoint with the voted city
+            final index = allCheckpoints.indexOf(cp);
+            allCheckpoints[index] = Checkpoint(
+              id: cp.id,
+              name: cp.name,
+              status: cp.status,
+              city: votedCities[cp.id]!,
+              latitude: cp.latitude,
+              longitude: cp.longitude,
+              sourceText: cp.sourceText,
+              effectiveAt: cp.effectiveAt,
+              updatedAt: cp.updatedAt,
+            );
+          }
+        }
+        
+        // Update cities list
+        cities = [
+          "الكل",
+          ...allCheckpoints
+              .map((cp) => cp.city)
+              .toSet()
+              .where((c) => c != "غير معروف" && c.isNotEmpty),
+        ];
+      });
+    }
   }
 }
