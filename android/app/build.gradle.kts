@@ -34,8 +34,8 @@ android {
         applicationId = "com.tariqi.roads" // 🔥 package name جديد للتطبيق
         minSdk = 23
         targetSdk = flutter.targetSdkVersion
-        versionCode = 4 // 🔥 إصدار رقمي
-        versionName = "1.0.3" // 🔥 إصدار نصي
+        versionCode = 9 // 🔥 إصدار رقمي
+        versionName = "1.0.8" // 🔥 إصدار نصي
 
         // 🔥 معلومات إضافية للتطبيق
         setProperty("archivesBaseName", "tariqi-roads-v$versionName")

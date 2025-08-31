@@ -31,23 +31,29 @@ Future<void> showNotification(String title, String body) async {
     return;
   }
 
+  final prefs = await SharedPreferences.getInstance();
+  final vibrationEnabled = prefs.getBool('vibration_enabled') ?? true;
+  final soundEnabled = prefs.getBool('sound_enabled') ?? true;
+
   // التحقق من إمكانية الاهتزاز
-  bool? hasVibrator = await Vibration.hasVibrator();
-  if (hasVibrator == true) {
-    Vibration.vibrate(duration: 500);
+  if (vibrationEnabled) {
+    bool? hasVibrator = await Vibration.hasVibrator();
+    if (hasVibrator == true) {
+      Vibration.vibrate(duration: 500);
+    }
   }
 
-  const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+  final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
     'checkpoint_channel',
     'Checkpoint Updates',
     channelDescription: 'تنبيهات تحديث حالة الحواجز',
     importance: Importance.max,
     priority: Priority.high,
-    styleInformation: BigTextStyleInformation(''),
-    enableVibration: true,
-    playSound: true,
+    styleInformation: const BigTextStyleInformation(''),
+    enableVibration: vibrationEnabled,
+    playSound: soundEnabled,
   );
-  const NotificationDetails platformDetails = NotificationDetails(android: androidDetails);
+  final NotificationDetails platformDetails = NotificationDetails(android: androidDetails);
   await flutterLocalNotificationsPlugin.show(0, title, body, platformDetails);
 }
 
@@ -104,31 +110,14 @@ void onStart(ServiceInstance service) async {
     service.stopSelf();
   });
 
-  // تحقق من التحديثات بناءً على الوقت
-  Timer.periodic(const Duration(minutes: 1), (timer) async {
+  // تحقق من التحديثات كل 90 ثانية (1.5 دقيقة)
+  Timer.periodic(const Duration(seconds: 90), (timer) async {
     final prefs = await SharedPreferences.getInstance();
     final notificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
     
     if (notificationsEnabled) {
-      // تحديد فترة التحقق حسب الوقت
-      final now = DateTime.now();
-      final hour = now.hour;
-      
-      // أثناء النهار (6 صباحاً - 10 مساءً): كل 3 دقائق
-      // أثناء الليل: كل 10 دقائق
-      final isDayTime = hour >= 6 && hour <= 22;
-      final checkInterval = isDayTime ? 3 : 10;
-      
-      // التحقق من آخر فحص
-      final lastCheck = prefs.getString('last_background_check');
-      final shouldCheck = lastCheck == null || 
-          (lastCheck.isNotEmpty && DateTime.now().difference(DateTime.tryParse(lastCheck) ?? DateTime.now()).inMinutes >= checkInterval);
-      
-      if (shouldCheck) {
-        debugPrint('⏰ Background check triggered (${isDayTime ? "daytime" : "nighttime"} mode)');
-        await _checkForUpdates();
-        await prefs.setString('last_background_check', DateTime.now().toIso8601String());
-      }
+      debugPrint('⏰ Background check triggered (90-second interval)');
+      await _checkForUpdates();
     }
   });
 }
@@ -213,55 +202,83 @@ String _buildQueryString(Map<String, String> params) {
 void main() async {
   // تأكد من تهيئة كل شيء قبل تشغيل التطبيق
   WidgetsFlutterBinding.ensureInitialized();
-  await MobileAds.instance.initialize();
-  // إذا كان التطبيق يعمل على الويب، لا تقم بتهيئة الخدمات
-  if (kIsWeb) {
-    debugPrint('🌐 Running on web - skipping platform-specific features');
-  } else {
-    // تهيئة التنبيهات والخدمات للمنصات الأخرى
-    try {
-      const AndroidInitializationSettings initializationSettingsAndroid =
-      AndroidInitializationSettings('@mipmap/ic_launcher');
-
-      const DarwinInitializationSettings initializationSettingsIOS =
-      DarwinInitializationSettings(
-        requestAlertPermission: true,
-        requestBadgePermission: true,
-        requestSoundPermission: true,
-      );
-
-      const InitializationSettings initializationSettings = InitializationSettings(
-        android: initializationSettingsAndroid,
-        iOS: initializationSettingsIOS,
-      );
-
-      await flutterLocalNotificationsPlugin.initialize(
-        initializationSettings,
-        onDidReceiveNotificationResponse: (NotificationResponse response) async {
-          debugPrint('Notification tapped: ${response.payload}');
-        },
-      );
-
-      // طلب الأذونات على iOS
-      await flutterLocalNotificationsPlugin
-          .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
-          ?.requestPermissions(alert: true, badge: true, sound: true);
-
-      // طلب الأذونات على Android 13+
-      await flutterLocalNotificationsPlugin
-          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-          ?.requestNotificationsPermission();
-
-      // بدء الخدمة في الخلفية
-      await initializeService();
-      debugPrint('✅ Platform-specific features initialized');
-    } catch (e) {
-      debugPrint('❌ Error during initialization: $e');
-    }
-  }
-
-  // الآن قم بتشغيل التطبيق مع Splash Screen
+  
+  // بدء تشغيل التطبيق فوراً مع تأجيل التهيئة الثقيلة
   runApp(const AhwalApp());
+  
+  // تهيئة الإعلانات والميزات الأخرى في الخلفية
+  _initializeBackgroundFeatures();
+}
+
+// تهيئة الميزات الثقيلة في الخلفية لتسريع بدء التطبيق
+Future<void> _initializeBackgroundFeatures() async {
+  try {
+    // تهيئة الإعلانات
+    await MobileAds.instance.initialize();
+    
+    // تهيئة باقي الميزات إذا لم يكن التطبيق على الويب
+    if (!kIsWeb) {
+      await _initializePlatformSpecificFeatures();
+    }
+  } catch (e) {
+    debugPrint('❌ Error during background initialization: $e');
+  }
+}
+
+Future<void> _initializePlatformSpecificFeatures() async {
+  try {
+    const AndroidInitializationSettings initializationSettingsAndroid =
+    AndroidInitializationSettings('@mipmap/ic_launcher');
+
+    const DarwinInitializationSettings initializationSettingsIOS =
+    DarwinInitializationSettings(
+      requestAlertPermission: false, // تأجيل طلب الأذونات
+      requestBadgePermission: false,
+      requestSoundPermission: false,
+    );
+
+    const InitializationSettings initializationSettings = InitializationSettings(
+      android: initializationSettingsAndroid,
+      iOS: initializationSettingsIOS,
+    );
+
+    await flutterLocalNotificationsPlugin.initialize(
+      initializationSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) async {
+        debugPrint('Notification tapped: ${response.payload}');
+      },
+    );
+
+    // تأجيل طلب الأذونات إلى ما بعد تحميل التطبيق
+    Future.delayed(const Duration(seconds: 3), () async {
+      await _requestNotificationPermissions();
+    });
+
+    // بدء الخدمة في الخلفية بعد تأخير
+    Future.delayed(const Duration(seconds: 2), () async {
+      await initializeService();
+    });
+    
+    debugPrint('✅ Platform-specific features initialized');
+  } catch (e) {
+    debugPrint('❌ Error during platform initialization: $e');
+  }
+}
+
+Future<void> _requestNotificationPermissions() async {
+  try {
+    // طلب الأذونات على iOS
+    await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
+        ?.requestPermissions(alert: true, badge: true, sound: true);
+
+    // طلب الأذونات على Android 13+
+    await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestNotificationsPermission();
+  } catch (e) {
+    debugPrint('❌ Error requesting permissions: $e');
+  }
 }
 
 class AhwalApp extends StatefulWidget {
@@ -333,6 +350,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
   late AnimationController _animationController;
   late Animation<double> _animation;
   DateTime? _lastUpdate;
+  final GlobalKey<HomeScreenState> _homeScreenKey = GlobalKey<HomeScreenState>();
 
   @override
   void initState() {
@@ -350,6 +368,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
 
     screens = [
       HomeScreen(
+        key: _homeScreenKey,
         toggleTheme: widget.toggleTheme, 
         themeMode: widget.themeMode,
         onLastUpdateChanged: (DateTime? lastUpdate) {
@@ -429,6 +448,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
     // We'll use a more sophisticated approach by rebuilding the screen
     setState(() {
       screens[0] = HomeScreen(
+        key: _homeScreenKey,
         toggleTheme: widget.toggleTheme, 
         themeMode: widget.themeMode,
         onLastUpdateChanged: (DateTime? lastUpdate) {
@@ -516,7 +536,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
           // Menu popup with all actions
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
-            onSelected: (String value) {
+            onSelected: (String value) async {
               switch (value) {
                 case 'refresh':
                   _triggerRefreshForCurrentScreen();
@@ -532,6 +552,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
                   setState(() {
                     // Rebuild screens with new theme
                     screens[0] = HomeScreen(
+                      key: _homeScreenKey,
                       toggleTheme: widget.toggleTheme, 
                       themeMode: widget.themeMode,
                       onLastUpdateChanged: (DateTime? lastUpdate) {
@@ -543,10 +564,26 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
                   });
                   break;
                 case 'settings':
-                  Navigator.push(
+                  final result = await Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                    PageRouteBuilder(
+                      pageBuilder: (context, animation, _) => const SettingsScreen(),
+                      transitionDuration: const Duration(milliseconds: 200),
+                      transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                        return SlideTransition(
+                          position: Tween<Offset>(
+                            begin: const Offset(1.0, 0.0),
+                            end: Offset.zero,
+                          ).animate(animation),
+                          child: child,
+                        );
+                      },
+                    ),
                   );
+                  // Reload home screen settings when returning from settings
+                  if (currentIndex == 0 && result != false) {
+                    _homeScreenKey.currentState?.reloadRefreshSettings();
+                  }
                   break;
                 case 'app_info':
                   _showAppInfo(context);
@@ -706,31 +743,87 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
   }
 
   Future<void> _shareGeneralStats() async {
-    // This method will need to get data from the home screen
-    // For now, we'll just share the app
-    await ShareService.shareApp();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تم مشاركة الإحصائيات'),
-          duration: Duration(seconds: 2),
-          backgroundColor: Colors.green,
-        ),
-      );
+    try {
+      // الحصول على الإحصائيات من الشاشة الرئيسية
+      final homeScreenState = _homeScreenKey.currentState;
+      if (homeScreenState != null) {
+        final checkpoints = homeScreenState.allCheckpoints;
+        
+        if (checkpoints.isNotEmpty) {
+          final open = checkpoints.where((c) => 
+            c.status.toLowerCase().contains('مفتوح') || 
+            c.status.toLowerCase().contains('سالك')).length;
+          final closed = checkpoints.where((c) => 
+            c.status.toLowerCase().contains('مغلق')).length;
+          final congestion = checkpoints.where((c) => 
+            c.status.toLowerCase().contains('ازدحام')).length;
+            
+          await ShareService.shareGeneralStats(checkpoints.length, open, closed, congestion);
+        } else {
+          await ShareService.shareApp();
+        }
+      } else {
+        await ShareService.shareApp();
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم مشاركة الإحصائيات'),
+            duration: Duration(seconds: 2),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('خطأ في مشاركة الإحصائيات'),
+            duration: Duration(seconds: 2),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
   Future<void> _shareFavoriteCheckpoints() async {
-    // This will need to access the favorites from the home screen
-    // For now, just show a message
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تم مشاركة قائمة المفضلة'),
-          duration: Duration(seconds: 2),
-          backgroundColor: Colors.green,
-        ),
-      );
+    try {
+      // الحصول على المفضلة من الشاشة الرئيسية
+      final homeScreenState = _homeScreenKey.currentState;
+      if (homeScreenState != null) {
+        final allCheckpoints = homeScreenState.allCheckpoints;
+        final favoriteIds = homeScreenState.favoriteIds;
+        
+        final favorites = allCheckpoints
+            .where((checkpoint) => favoriteIds.contains(checkpoint.id))
+            .toList();
+            
+        await ShareService.shareFavoriteCheckpoints(favorites);
+      } else {
+        await ShareService.shareApp();
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم مشاركة قائمة المفضلة'),
+            duration: Duration(seconds: 2),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('خطأ في مشاركة المفضلة'),
+            duration: Duration(seconds: 2),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -759,7 +852,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
             children: [
               Text('تطبيق طريقي - دليل الطرق الذكي', style: TextStyle(fontWeight: FontWeight.bold)),
               SizedBox(height: 8),
-              Text('الإصدار: 1.0.1'),
+              Text('الإصدار: 1.0.8'),
               SizedBox(height: 8),
               Text('تطبيق لمتابعة حالة الحواجز والطرق في الوقت الفعلي.'),
               SizedBox(height: 12),

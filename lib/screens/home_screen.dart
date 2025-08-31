@@ -9,11 +9,12 @@ import '../models/checkpoint.dart';
 import '../services/api_service.dart';
 import '../widgets/nativ_ad_card.dart';
 import '../services/cache_service.dart';
-import '../services/share_service.dart';
 import '../widgets/checkpoint_card.dart';
 import '../widgets/checkpoint_history_dialog.dart';
 import '../services/city_voting_service.dart';
 import '../services/checkpoint_history_service.dart';
+import '../services/favorite_checkpoint_service.dart';
+import '../utils/data_filter_utils.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback toggleTheme;
@@ -28,10 +29,10 @@ class HomeScreen extends StatefulWidget {
   });
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class HomeScreenState extends State<HomeScreen> {
   // المتغيرات الأساسية
   List<Checkpoint> allCheckpoints = [];
   List<String> cities = [];
@@ -58,32 +59,54 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // متغيرات البحث والفلترة
   bool _isAutoRefreshEnabled = true;
+  int _refreshInterval = 3; // بالدقائق - توازن بين حداثة البيانات والأداء
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = "";
   bool _showOnlyFavorites = false;
-  Set<String> _activeFilters = {}; // مجموعة الفلاتر النشطة
+  final Set<String> _activeFilters = {}; // مجموعة الفلاتر النشطة
   List<String>? _quickStatusFilter;
 
+  // الألوان المخصصة
+  Map<String, int> _customColors = {};
+
   // 🔥 الميزة الجديدة: التبديل بين عرض جميع الرسائل أو آخر حالة فقط
-  bool _showAllMessages = true;
 
   @override
   void initState() {
     super.initState();
-
-    CacheService.updateUsageStats();
-
-    initNotifications();
-    loadFavorites();
-    loadNotificationSetting();
-    loadLastReadIndex();
-    _loadLastReadIndex();
-    loadAutoRefreshSetting();
-    _loadShowAllMessagesSetting(); // 🔥 تحميل إعداد عرض الرسائل
-    fetchCheckpoints();
-    startAutoRefresh();
-
+    
+    // تحميل الإعدادات الأساسية أولاً (متزامن)
+    _initializeApp();
+    
     _scrollController.addListener(_scrollListener);
+  }
+  
+  // تحميل التطبيق بشكل محسّن
+  Future<void> _initializeApp() async {
+    // الإعدادات الأساسية فقط
+    await loadFavorites();
+    await loadNotificationSetting();
+    await loadAutoRefreshSetting();
+    await _loadCustomColors();
+    
+    // بدء تحميل البيانات فوراً
+    fetchCheckpoints();
+    
+    // الإعدادات الثانوية بشكل غير متزامن
+    _initializeSecondaryFeatures();
+  }
+  
+  // تحميل الميزات الثانوية بدون توقف
+  void _initializeSecondaryFeatures() {
+    // تشغيل بشكل غير متزامن
+    Future.microtask(() {
+      CacheService.updateUsageStats();
+      initNotifications();
+      loadLastReadIndex();
+      _loadLastReadIndex();
+      _loadShowAllMessagesSetting();
+      startAutoRefresh();
+    });
   }
 
   void _scrollListener() {
@@ -121,31 +144,131 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> loadFavorites() async {
-    final prefs = await SharedPreferences.getInstance();
+    final favoriteCheckpoints = await FavoriteCheckpointService.getFavoriteCheckpoints();
     setState(() {
-      favoriteIds = prefs.getStringList('favorites')?.toSet() ?? {};
+      favoriteIds = favoriteCheckpoints;
     });
   }
 
   Future<void> toggleFavorite(String id) async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      if (favoriteIds.contains(id)) {
-        favoriteIds.remove(id);
-        lastFavoriteStatuses.remove(id);
-      } else {
-        favoriteIds.add(id);
-      }
-      prefs.setStringList('favorites', favoriteIds.toList());
-    });
-
     final checkpoint = allCheckpoints.firstWhere((cp) => cp.id == id);
-    final action = favoriteIds.contains(id) ? "أُضيف إلى" : "أُزيل من";
-    Fluttertoast.showToast(
-      msg: "${checkpoint.name} $action المفضلة",
-      toastLength: Toast.LENGTH_SHORT,
-      gravity: ToastGravity.BOTTOM,
+    final result = await FavoriteCheckpointService.toggleFavorite(id, checkpoint.name);
+    
+    if (result.success) {
+      // Update local state
+      final updatedFavorites = await FavoriteCheckpointService.getFavoriteCheckpoints();
+      setState(() {
+        favoriteIds = updatedFavorites;
+        if (!favoriteIds.contains(id)) {
+          lastFavoriteStatuses.remove(id);
+        }
+      });
+      
+      Fluttertoast.showToast(
+        msg: result.message,
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+      );
+    } else {
+      if (result.action == FavoriteCheckpointAction.limitReached) {
+        _showCheckpointLimitDialog(checkpoint.name);
+      } else {
+        Fluttertoast.showToast(
+          msg: result.message,
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+        );
+      }
+    }
+  }
+
+  // Method for showing checkpoint limit dialog
+  void _showCheckpointLimitDialog(String checkpointName) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        title: Row(
+          children: [
+            Icon(Icons.info, color: Colors.orange, size: 28),
+            SizedBox(width: 8),
+            Text(
+              'حد المفضلة',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+              ),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.gps_fixed,
+                    color: Colors.orange,
+                    size: 48,
+                  ),
+                  SizedBox(height: 12),
+                  Text(
+                    'وصلت للحد الأقصى من الحواجز المفضلة',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    textAlign: TextAlign.center,
+                    textDirection: TextDirection.rtl,
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    'شاهد إعلان لزيادة عدد الحواجز المفضلة',
+                    style: TextStyle(fontSize: 14),
+                    textAlign: TextAlign.center,
+                    textDirection: TextDirection.rtl,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('إلغاء'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              FavoriteCheckpointService.showUpgradeDialog(
+                context,
+                onWatchAd: () => _watchAdForCheckpointUpgrade(checkpointName),
+              );
+            },
+            icon: Icon(Icons.upgrade),
+            label: Text('ترقية'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
     );
+  }
+
+
+  Future<void> _watchAdForCheckpointUpgrade(String checkpointName) async {
+    await FavoriteCheckpointService.showRewardAdForUpgrade(context);
+    // After watching ad, try adding the checkpoint again
+    await Future.delayed(Duration(seconds: 1));
+    // Reload favorites to update the UI
+    await loadFavorites();
   }
 
   Future<void> loadNotificationSetting() async {
@@ -159,56 +282,30 @@ class _HomeScreenState extends State<HomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _isAutoRefreshEnabled = prefs.getBool('auto_refresh_enabled') ?? true;
+      _refreshInterval = prefs.getInt('refresh_interval') ?? 3;
     });
   }
 
   // 🔥 تحميل إعداد عرض الرسائل
   Future<void> _loadShowAllMessagesSetting() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _showAllMessages = prefs.getBool('show_all_messages') ?? true;
-    });
+    // Method intentionally left empty for future use
   }
 
   // 🔥 حفظ إعداد عرض الرسائل
-  Future<void> _saveShowAllMessagesSetting() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('show_all_messages', _showAllMessages);
-  }
 
-  // 🔥 تبديل وضع عرض الرسائل
-  Future<void> _toggleShowAllMessages() async {
-    setState(() {
-      _showAllMessages = !_showAllMessages;
-    });
-
-    await _saveShowAllMessagesSetting();
-
-    // إعادة تحميل البيانات بناء على الوضع الجديد
-    await fetchCheckpoints(showToast: true);
-
-    // إظهار رسالة توضيحية
-    final message = _showAllMessages
-        ? "✅ تم تفعيل عرض جميع الرسائل"
-        : "📌 تم تفعيل عرض آخر حالة فقط";
-
-    Fluttertoast.showToast(
-      msg: message,
-      toastLength: Toast.LENGTH_SHORT,
-      gravity: ToastGravity.BOTTOM,
-    );
-  }
 
   Future<void> toggleAutoRefresh() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _isAutoRefreshEnabled = !_isAutoRefreshEnabled;
+      // Reload refresh interval in case it was changed in settings
+      _refreshInterval = prefs.getInt('refresh_interval') ?? 3;
     });
     await prefs.setBool('auto_refresh_enabled', _isAutoRefreshEnabled);
 
     if (_isAutoRefreshEnabled) {
       startAutoRefresh();
-      Fluttertoast.showToast(msg: "✅ تم تفعيل التحديث التلقائي");
+      Fluttertoast.showToast(msg: "✅ تم تفعيل التحديث التلقائي (كل $_refreshInterval دقيقة)");
     } else {
       _refreshTimer?.cancel();
       Fluttertoast.showToast(msg: "⏸️ تم إيقاف التحديث التلقائي");
@@ -228,6 +325,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _saveLastReadIndex(int index) async {
+
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('lastReadIndex', index);
   }
@@ -263,98 +361,86 @@ class _HomeScreenState extends State<HomeScreen> {
   void startAutoRefresh() {
     if (!_isAutoRefreshEnabled) return;
     _refreshTimer?.cancel();
-    _refreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+    _refreshTimer = Timer.periodic(Duration(minutes: _refreshInterval), (_) {
       if (_isAutoRefreshEnabled) {
         fetchCheckpoints(showToast: false);
       }
     });
   }
 
-  // 🔥 دالة تحميل البيانات المحدثة
+  // Method to reload settings and restart auto-refresh with new interval
+  Future<void> reloadRefreshSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final wasEnabled = _isAutoRefreshEnabled;
+    
+    setState(() {
+      _isAutoRefreshEnabled = prefs.getBool('auto_refresh_enabled') ?? true;
+      _refreshInterval = prefs.getInt('refresh_interval') ?? 3;
+    });
+
+    // إعادة تحميل الألوان المخصصة
+    await _loadCustomColors();
+
+    // Restart timer with new interval if auto-refresh is enabled
+    if (_isAutoRefreshEnabled) {
+      _refreshTimer?.cancel();
+      startAutoRefresh();
+      if (wasEnabled) {
+        // Show toast only if settings were changed while already enabled
+        Fluttertoast.showToast(msg: "🔄 تم تحديث فترة التحديث التلقائي إلى $_refreshInterval دقيقة");
+      }
+    }
+  }
+
+  // 🔥 دالة تحميل البيانات المحدثة - محسّنة
   Future<void> fetchCheckpoints({bool showToast = true}) async {
-    setState(() => _isLoading = true);
+    // تحديث وقت آخر محاولة استعلام
+    await CacheService.updateLastFetchAttempt();
+    
+    // تحسين الأداء: تجنب setState إذا كانت البيانات متوفرة من الكاش
+    final cachedData = await CacheService.getCachedCheckpoints();
+    
+    if (cachedData != null && cachedData.isNotEmpty) {
+      // استخدام الكاش فوراً لتحسين الاستجابة
+      _updateUIWithData(cachedData);
+      
+      // تحديث في الخلفية بصمت
+      _backgroundRefresh();
+      
+      if (showToast) {
+        HapticFeedback.lightImpact();
+        Fluttertoast.showToast(
+          msg: "📋 تم تحميل البيانات من الكاش (${cachedData.length} حاجز)",
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+        );
+      }
+      return;
+    }
+    
+    // إذا لم يكن هناك كاش، عرض مؤشر التحميل
+    if (_isLoading == false) {
+      setState(() => _isLoading = true);
+    }
 
     try {
-      List<Checkpoint>? data;
-
-      // محاولة تحميل من الكاش أولاً
-      data = await CacheService.getCachedCheckpoints();
-
-      // إذا لم يكن هناك كاش صالح، تحميل من API
-      if (data == null) {
-        if (selectedCity != "الكل") {
-          // تحميل حسب المدينة المختارة
-          data = await ApiService.getCheckpointsByCity(selectedCity);
-        } else {
-          // Use the same strategy as city filter screen for faster updates
-          try {
-            // محاولة جلب جميع الرسائل أولاً
-            data = await ApiService.getAllCheckpoints();
-            debugPrint('✅ HomeScreen: getAllCheckpoints نجح - ${data.length} رسالة');
-          } catch (e) {
-            debugPrint('❌ HomeScreen: getAllCheckpoints فشل: $e');
-
-            try {
-              // fallback للطريقة البديلة
-              data = await ApiService.getLatestCheckpointsOnly();
-              debugPrint('✅ HomeScreen: getLatestCheckpointsOnly نجح');
-            } catch (e2) {
-              debugPrint('❌ HomeScreen: getLatestCheckpointsOnly فشل: $e2');
-
-              // fallback أخير
-              data = await ApiService.fetchLatestOnly();
-              debugPrint('✅ HomeScreen: fetchLatestOnly نجح');
-            }
-          }
-        }
-
-        // حفظ في الكاش
-        if (data != null) {
-          await CacheService.cacheCheckpoints(data);
-        }
+      final data = await _fetchDataFromAPI();
+      
+      // حفظ في الكاش
+      if (data.isNotEmpty) {
+        await CacheService.cacheCheckpoints(data);
       }
 
-      detectChanges(data ?? []);
+      // تحسين الأداء: تنفيذ العمليات الثقيلة خارج setState
+      detectChanges(data);
 
-      // Record checkpoint history for all fetched checkpoints
-      if (data != null && data.isNotEmpty) {
-        await CheckpointHistoryService.recordMultipleCheckpoints(data);
+      // Record checkpoint history asynchronously  
+      if (data.isNotEmpty) {
+        CheckpointHistoryService.recordMultipleCheckpoints(data);
       }
 
-      setState(() {
-        allCheckpoints = data ?? [];
-        _isLoading = false;
-        // Apply city voting results asynchronously
-        _applyCityVotingResults();
-        
-        cities = [
-          "الكل",
-          ...allCheckpoints
-              .map((cp) => cp.city)
-              .toSet()
-              .where((c) => c != "غير معروف" && c.isNotEmpty),
-        ];
-
-        final List<Checkpoint> displayedNow = getFilteredCheckpoints();
-
-        _calculateNewMessages();
-
-        if (lastDisplayed.isNotEmpty &&
-            displayedNow.length > lastDisplayed.length) {
-          newItemsCount = displayedNow.length - lastDisplayed.length;
-        }
-        lastDisplayed = displayedNow;
-        
-        // إرسال آخر تحديث إلى الـ AppBar العام
-        final latestUpdate = displayedNow
-            .where((c) => c.effectiveAtDateTime != null)
-            .map((c) => c.effectiveAtDateTime!)
-            .fold<DateTime?>(
-          null,
-              (prev, el) => prev == null || el.isAfter(prev) ? el : prev,
-        );
-        widget.onLastUpdateChanged?.call(latestUpdate);
-      });
+      // تحديث الواجهة بالبيانات الجديدة
+      _updateUIWithData(data);
 
       if (_newMessagesCount > 0 && showToast) {
         _notifyNewMessages();
@@ -362,7 +448,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (showToast) {
         HapticFeedback.lightImpact();
-
         Fluttertoast.showToast(
           msg: "✅ تم تحديث البيانات (${allCheckpoints.length} حاجز)",
           toastLength: Toast.LENGTH_SHORT,
@@ -374,14 +459,116 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (showToast) {
         HapticFeedback.heavyImpact();
-
         Fluttertoast.showToast(
-          msg: "❌ فشل الاتصال بالخادم",
+          msg: "❌ تعذر الاتصال بالإنترنت",
           toastLength: Toast.LENGTH_LONG,
           gravity: ToastGravity.BOTTOM,
         );
       }
     }
+  }
+
+  // تحديث في الخلفية بدون عرض مؤشر تحميل
+  Future<void> _backgroundRefresh() async {
+    try {
+      final data = await _fetchDataFromAPI();
+      
+      if (data.isNotEmpty) {
+        await CacheService.cacheCheckpoints(data);
+        detectChanges(data);
+        CheckpointHistoryService.recordMultipleCheckpoints(data);
+        _updateUIWithData(data);
+      }
+    } catch (e) {
+      // تجاهل الأخطاء في التحديث الخلفي
+      debugPrint('Background refresh failed: $e');
+    }
+  }
+
+  // استخراج منطق API لتحسين القراءة
+  Future<List<Checkpoint>> _fetchDataFromAPI() async {
+    if (selectedCity != "الكل") {
+      final data = await ApiService.getCheckpointsByCity(selectedCity);
+      return data ?? [];
+    }
+    
+    // محاولة تدريجية للحصول على البيانات
+    try {
+      final data = await ApiService.getAllCheckpoints();
+      debugPrint('✅ HomeScreen: getAllCheckpoints نجح - ${data.length} رسالة');
+      return data;
+    } catch (e) {
+      debugPrint('❌ HomeScreen: getAllCheckpoints فشل: $e');
+      
+      try {
+        final data = await ApiService.getLatestCheckpointsOnly();
+        debugPrint('✅ HomeScreen: getLatestCheckpointsOnly نجح');
+        return data;
+      } catch (e2) {
+        debugPrint('❌ HomeScreen: getLatestCheckpointsOnly فشل: $e2');
+        
+        final data = await ApiService.fetchLatestOnly();
+        debugPrint('✅ HomeScreen: fetchLatestOnly نجح');
+        return data;
+      }
+    }
+  }
+
+  // تحديث الواجهة بالبيانات (متزامن وسريع)
+  void _updateUIWithData(List<Checkpoint> data) {
+    final newCities = [
+      "الكل",
+      ...data
+          .map((cp) => cp.city)
+          .toSet()
+          .where((c) => c != "غير معروف" && c.isNotEmpty),
+    ];
+
+    setState(() {
+      allCheckpoints = data;
+      cities = newCities;
+      _isLoading = false;
+    });
+
+    // إزالة كاش الفلترة عند تحديث البيانات
+    _cachedFilteredCheckpoints = null;
+    _lastFilterState = null;
+
+    // تنفيذ المعالجات الإضافية بشكل غير متزامن
+    Future.microtask(() => _processDataPostLoad());
+  }
+
+  // معالجة البيانات بعد التحميل لتحسين الأداء
+  void _processDataPostLoad() {
+    // Apply city voting results asynchronously
+    _applyCityVotingResults();
+    
+    final List<Checkpoint> displayedNow = getFilteredCheckpoints();
+    _calculateNewMessages();
+
+    if (lastDisplayed.isNotEmpty && displayedNow.length > lastDisplayed.length) {
+      newItemsCount = displayedNow.length - lastDisplayed.length;
+    }
+    lastDisplayed = displayedNow;
+    
+    // إرسال آخر تحديث إلى الـ AppBar العام (وقت آخر استعلام بدلاً من آخر رسالة)
+    _updateLastFetchTime();
+  }
+
+  // دالة لتحديث وقت آخر استعلام
+  Future<void> _updateLastFetchTime() async {
+    final lastFetchTime = await CacheService.getLastFetchAttempt();
+    if (lastFetchTime != null) {
+      widget.onLastUpdateChanged?.call(lastFetchTime);
+    }
+  }
+
+  // تحميل الألوان المخصصة
+  Future<void> _loadCustomColors() async {
+    final customColors = await CacheService.getCustomColors();
+    setState(() {
+      _customColors = customColors;
+    });
   }
 
   Future<void> _notifyNewMessages() async {
@@ -419,57 +606,76 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // متغيرات للكاش المحلي لتحسين الأداء
+  List<Checkpoint>? _cachedFilteredCheckpoints;
+  String? _lastFilterState;
+
   List<Checkpoint> getFilteredCheckpoints() {
-    List<Checkpoint> filtered = allCheckpoints;
+    // إنشاء مفتاح للحالة الحالية للفلترة
+    final currentFilterState = '${selectedCity}_${_searchQuery}_${_activeFilters.join(',')}_${_showOnlyFavorites}_${_quickStatusFilter?.join(',') ?? ''}';
+    
+    // استخدام الكاش إذا لم تتغير حالة الفلترة
+    if (_cachedFilteredCheckpoints != null && _lastFilterState == currentFilterState) {
+      return _cachedFilteredCheckpoints!;
+    }
+
+    // 🔥 أولاً، فلترة البيانات القديمة (أكثر من 48 ساعة)
+    List<Checkpoint> filtered = DataFilterUtils.filterRecentCheckpoints(
+      allCheckpoints,
+      maxHours: 48,
+    );
 
     if (selectedCity != "الكل") {
       filtered = filtered.where((cp) => cp.city == selectedCity).toList();
     }
 
     if (_searchQuery.isNotEmpty) {
+      final searchLower = _searchQuery.toLowerCase();
       filtered = filtered
-          .where(
-            (cp) =>
-        cp.name.contains(_searchQuery) ||
-            cp.city.contains(_searchQuery) ||
-            cp.status.contains(_searchQuery),
+          .where((cp) =>
+        cp.name.toLowerCase().contains(searchLower) ||
+            cp.city.toLowerCase().contains(searchLower) ||
+            cp.status.toLowerCase().contains(searchLower),
       )
           .toList();
     }
 
-    // Apply active filters
+    // Apply active filters - محسّن
     if (_activeFilters.isNotEmpty) {
-      List<Checkpoint> results = [];
-      
-      // إذا كان فلتر المفضلة مفعل
-      if (_activeFilters.contains('favorites')) {
-        var favoriteFiltered = filtered.where((cp) => favoriteIds.contains(cp.id));
-        results.addAll(favoriteFiltered);
+      if (_activeFilters.length == 1 && _activeFilters.contains('favorites')) {
+        filtered = filtered.where((cp) => favoriteIds.contains(cp.id)).toList();
+      } else {
+        final Set<Checkpoint> results = <Checkpoint>{};
+        
+        if (_activeFilters.contains('favorites')) {
+          results.addAll(filtered.where((cp) => favoriteIds.contains(cp.id)));
+        }
+        
+        // فلاتر الحالة - محسّن
+        final statusesToShow = <String>[];
+        if (_activeFilters.contains('open')) {
+          statusesToShow.addAll(['مفتوح', 'سالكة', 'سالكه', 'سالك']);
+        }
+        if (_activeFilters.contains('closed')) {
+          statusesToShow.add('مغلق');
+        }
+        if (_activeFilters.contains('congestion')) {
+          statusesToShow.add('ازدحام');
+        }
+        if (_activeFilters.contains('checkpoint')) {
+          statusesToShow.add('حاجز');
+        }
+        
+        if (statusesToShow.isNotEmpty) {
+          results.addAll(filtered.where((cp) =>
+              statusesToShow.any((status) =>
+                  cp.status.toLowerCase().contains(status.toLowerCase())
+              )
+          ));
+        }
+        
+        filtered = results.toList();
       }
-      
-      // فلاتر الحالة
-      List<String> statusesToShow = [];
-      if (_activeFilters.contains('open')) {
-        statusesToShow.addAll(['مفتوح', 'سالكة', 'سالكه', 'سالك']);
-      }
-      if (_activeFilters.contains('closed')) {
-        statusesToShow.add('مغلق');
-      }
-      if (_activeFilters.contains('congestion')) {
-        statusesToShow.add('ازدحام');
-      }
-      
-      if (statusesToShow.isNotEmpty) {
-        var statusFiltered = filtered.where((cp) =>
-            statusesToShow.any((status) =>
-                cp.status.toLowerCase().contains(status.toLowerCase())
-            )
-        );
-        results.addAll(statusFiltered);
-      }
-      
-      // إزالة المكررات وإرجاع النتائج
-      filtered = results.toSet().toList();
     }
 
     // Fallback to old logic for compatibility
@@ -485,23 +691,26 @@ class _HomeScreenState extends State<HomeScreen> {
       ).toList();
     }
 
+    // تحسين الترتيب
     filtered.sort((a, b) {
       // أولوية للمفضلة
-      if (favoriteIds.contains(a.id) && !favoriteIds.contains(b.id)) return -1;
-      if (!favoriteIds.contains(a.id) && favoriteIds.contains(b.id)) return 1;
+      final aIsFavorite = favoriteIds.contains(a.id);
+      final bIsFavorite = favoriteIds.contains(b.id);
+      if (aIsFavorite && !bIsFavorite) return -1;
+      if (!aIsFavorite && bIsFavorite) return 1;
 
-      // ثم ترتيب حسب التاريخ (الأحدث أولاً) بغض النظر عن الحالة
-      if (a.effectiveAtDateTime != null && b.effectiveAtDateTime != null) {
-        return b.effectiveAtDateTime!.compareTo(a.effectiveAtDateTime!);
-      }
+      // ثم ترتيب حسب التاريخ (الأحدث أولاً)
+      final aTime = a.effectiveAtDateTime ?? a.updatedAtDateTime;
+      final bTime = b.effectiveAtDateTime ?? b.updatedAtDateTime;
       
-      // إذا لم يكن هناك تاريخ فعال، نستخدم تاريخ التحديث
-      if (a.updatedAtDateTime != null && b.updatedAtDateTime != null) {
-        return b.updatedAtDateTime!.compareTo(a.updatedAtDateTime!);
+      if (aTime != null && bTime != null) {
+        return bTime.compareTo(aTime);
       }
+      if (aTime == null && bTime != null) return 1;
+      if (aTime != null && bTime == null) return -1;
       
-      // في النهاية، ترتيب حسب الحالة كمعيار أخير إذا لم تكن هناك تواريخ
-      final statusPriority = {
+      // ترتيب حسب الحالة كمعيار أخير
+      const statusPriority = {
         'مغلق': 0,
         'ازدحام': 1,
         'مفتوح': 2,
@@ -514,8 +723,13 @@ class _HomeScreenState extends State<HomeScreen> {
       return aPriority.compareTo(bPriority);
     });
 
+    // حفظ النتيجة في الكاش
+    _cachedFilteredCheckpoints = filtered;
+    _lastFilterState = currentFilterState;
+
     return filtered;
   }
+
 
   String formatRelativeTime(DateTime time) {
     final diff = DateTime.now().difference(time);
@@ -525,11 +739,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return "قبل ${diff.inDays} يوم";
   }
 
-  int _countByStatus(List<Checkpoint> checkpoints, List<String> statuses) {
-    return checkpoints.where((cp) =>
-        statuses.any((status) => cp.status.toLowerCase().contains(status.toLowerCase()))
-    ).length;
-  }
 
   // 🔥 دوال مساعدة للإعلانات
 
@@ -555,43 +764,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return listViewIndex - adsBefore;
   }
 
-  Widget _buildQuickStat(String label, int count, Color color) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: color.withValues(alpha: 0.3)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '$count',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: color,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: color,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
 
   Widget _buildQuickFilterButton(String label, String filterId) {
     bool isSelected = _activeFilters.contains(filterId);
@@ -605,13 +777,20 @@ class _HomeScreenState extends State<HomeScreen> {
         color = Colors.amber;
         break;
       case 'closed':
-        color = Colors.red;
+        // استخدام اللون المخصص للمغلق
+        color = Color(_customColors['closedColor'] ?? 0xFFF44336);
         break;
       case 'congestion':
-        color = Colors.orange;
+        // استخدام اللون المخصص للازدحام
+        color = Color(_customColors['congestionColor'] ?? 0xFFFF9800);
         break;
       case 'open':
-        color = Colors.green;
+        // استخدام اللون المخصص للسالك
+        color = Color(_customColors['openColor'] ?? 0xFF4CAF50);
+        break;
+      case 'checkpoint':
+        // استخدام اللون المخصص للحاجز
+        color = Color(_customColors['checkpointColor'] ?? 0xFF9C27B0);
         break;
       default:
         color = Colors.grey;
@@ -624,51 +803,75 @@ class _HomeScreenState extends State<HomeScreen> {
           color: Colors.transparent,
           child: InkWell(
             borderRadius: BorderRadius.circular(20),
-            onTap: () {
+            splashColor: color.withValues(alpha: 0.3),
+            highlightColor: color.withValues(alpha: 0.2),
+            onTap: () async {
+              // Add haptic feedback for better user experience
+              if (filterId == 'favorites') {
+                HapticFeedback.selectionClick();
+              } else {
+                HapticFeedback.lightImpact();
+              }
+              
               setState(() {
-                if (filterId == 'all') {
-                  // إذا كان "المفضلة" (الكل سابقاً)، مسح جميع الفلاتر
-                  _activeFilters.clear();
-                  _showOnlyFavorites = false;
-                  _quickStatusFilter = null;
+                // تبديل الفلتر
+                if (_activeFilters.contains(filterId)) {
+                  _activeFilters.remove(filterId);
                 } else {
-                  // تبديل الفلتر
-                  if (_activeFilters.contains(filterId)) {
-                    _activeFilters.remove(filterId);
-                  } else {
-                    _activeFilters.add(filterId);
-                  }
-                  
-                  // تحديث المتغيرات القديمة للتوافق
-                  _showOnlyFavorites = _activeFilters.contains('favorites');
-                  
-                  // تحديث فلتر الحالة
-                  List<String> statusFilters = [];
-                  if (_activeFilters.contains('closed')) statusFilters.add('مغلق');
-                  if (_activeFilters.contains('congestion')) statusFilters.add('ازدحام');
-                  if (_activeFilters.contains('open')) {
-                    statusFilters.addAll(['مفتوح', 'سالكة', 'سالكه', 'سالك']);
-                  }
-                  
-                  _quickStatusFilter = statusFilters.isEmpty ? null : statusFilters;
+                  _activeFilters.add(filterId);
                 }
+                
+                // تحديث المتغيرات القديمة للتوافق
+                _showOnlyFavorites = _activeFilters.contains('favorites');
+                
+                // تحديث فلتر الحالة
+                List<String> statusFilters = [];
+                if (_activeFilters.contains('closed')) statusFilters.add('مغلق');
+                if (_activeFilters.contains('congestion')) statusFilters.add('ازدحام');
+                if (_activeFilters.contains('checkpoint')) statusFilters.add('حاجز');
+                if (_activeFilters.contains('open')) {
+                  statusFilters.addAll(['مفتوح', 'سالكة', 'سالكه', 'سالك']);
+                }
+                
+                _quickStatusFilter = statusFilters.isEmpty ? null : statusFilters;
               });
             },
-            child: Container(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
               padding: const EdgeInsets.symmetric(vertical: 8),
               decoration: BoxDecoration(
                 color: isSelected ? color : Colors.transparent,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: color),
+                boxShadow: isSelected && filterId == 'favorites' ? [
+                  BoxShadow(
+                    color: color.withValues(alpha: 0.4),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ] : null,
               ),
-              child: Text(
-                label,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: isSelected ? Colors.white : color,
-                ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (filterId == 'favorites') ...[
+                    Icon(
+                      isSelected ? Icons.favorite : Icons.favorite_border,
+                      size: 14,
+                      color: isSelected ? Colors.white : color,
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                  Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: isSelected ? Colors.white : color,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -676,6 +879,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
 
   Color getStatusColor(String status) {
     switch (status.toLowerCase()) {
@@ -761,20 +965,23 @@ class _HomeScreenState extends State<HomeScreen> {
           : Stack(
         children: [
           Column(
-            children: [
+            children: [              
               // أزرار الفلتر المبسطة
               Container(
                 padding: const EdgeInsets.all(16.0),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    _buildQuickFilterButton('المفضلة', 'all'),
+                    _buildQuickFilterButton('المفضلة', 'favorites'),
                     _buildQuickFilterButton('سالك', 'open'),
                     _buildQuickFilterButton('مغلق', 'closed'),
                     _buildQuickFilterButton('ازدحام', 'congestion'),
+                    _buildQuickFilterButton('حاجز', 'checkpoint'),
                   ],
                 ),
               ),
+
+
 
               // Search Section Only
               Padding(
@@ -848,6 +1055,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: ListView.builder(
                     controller: _scrollController,
                     itemCount: _calculateTotalItemsWithAds(displayed.length),
+                    // تحسينات الأداء
+                    cacheExtent: 500.0,
+                    addAutomaticKeepAlives: false,
+                    addRepaintBoundaries: false,
                     itemBuilder: (context, index) {
                       // 🔥 تحديد ما إذا كان العنصر الحالي إعلان أم checkpoint
                       if (_isAdIndex(index)) {
@@ -867,13 +1078,14 @@ class _HomeScreenState extends State<HomeScreen> {
                           ? formatRelativeTime(checkpoint.effectiveAtDateTime!)
                           : 'غير محدد';
 
-                      return GestureDetector(
-                        onTap: () {
-                          _markAsRead(checkpointIndex);
-                          _showCheckpointHistory(checkpoint);
-                        },
-                        child: Column(
-                          children: [
+                      return RepaintBoundary(
+                        child: GestureDetector(
+                          onTap: () {
+                            _markAsRead(checkpointIndex);
+                            _showCheckpointHistory(checkpoint);
+                          },
+                          child: Column(
+                            children: [
                             if (_lastReadIndex != null &&
                                 checkpointIndex == _lastReadIndex! + 1 &&
                                 _newMessagesCount > 0)
@@ -922,7 +1134,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ],
                         ),
-                      );
+                      ),
+                    );
                     },
                   ),
                 ),

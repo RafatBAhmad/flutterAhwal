@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/checkpoint.dart';
+import 'api_service.dart';
 
 class CityVotingService {
   static const String _votePrefix = 'city_vote_';
@@ -13,44 +14,63 @@ class CityVotingService {
     String suggestedCity,
     String userDeviceId,
   ) async {
-    final prefs = await SharedPreferences.getInstance();
-    final key = '$_suggestionsPrefix$checkpointId';
-    
-    // Get existing suggestions
-    final existingSuggestions = prefs.getStringList(key) ?? [];
-    
-    // Create vote entry format: "city|userDeviceId|timestamp"
-    final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
-    final voteEntry = '$suggestedCity|$userDeviceId|$timestamp';
-    
-    // Add the new suggestion if user hasn't already voted
-    final userAlreadyVoted = existingSuggestions.any(
-      (suggestion) => suggestion.split('|')[1] == userDeviceId,
-    );
-    
-    if (!userAlreadyVoted) {
-      existingSuggestions.add(voteEntry);
-      await prefs.setStringList(key, existingSuggestions);
+    try {
+      // Try to submit to backend first
+      await ApiService.submitCitySuggestion(
+        checkpointId: checkpointId,
+        checkpointName: checkpointName,
+        suggestedCity: suggestedCity,
+        userDeviceId: userDeviceId,
+      );
+    } catch (e) {
+      // Fallback to local storage if backend fails
+      print('⚠️ الخدمة غير متاحة، استخدام التخزين المحلي: $e');
+      final prefs = await SharedPreferences.getInstance();
+      final key = '$_suggestionsPrefix$checkpointId';
+      
+      // Get existing suggestions
+      final existingSuggestions = prefs.getStringList(key) ?? [];
+      
+      // Create vote entry format: "city|userDeviceId|timestamp"
+      final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      final voteEntry = '$suggestedCity|$userDeviceId|$timestamp';
+      
+      // Add the new suggestion if user hasn't already voted
+      final userAlreadyVoted = existingSuggestions.any(
+        (suggestion) => suggestion.split('|')[1] == userDeviceId,
+      );
+      
+      if (!userAlreadyVoted) {
+        existingSuggestions.add(voteEntry);
+        await prefs.setStringList(key, existingSuggestions);
+      }
     }
   }
   
   /// Get city suggestions for a checkpoint
   static Future<Map<String, int>> getCitySuggestions(String checkpointId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final key = '$_suggestionsPrefix$checkpointId';
-    
-    final suggestions = prefs.getStringList(key) ?? [];
-    final Map<String, int> cityVotes = {};
-    
-    for (final suggestion in suggestions) {
-      final parts = suggestion.split('|');
-      if (parts.length >= 3) {
-        final city = parts[0];
-        cityVotes[city] = (cityVotes[city] ?? 0) + 1;
+    try {
+      // Try to get from backend first
+      return await ApiService.getCityVotes(checkpointId);
+    } catch (e) {
+      // Fallback to local storage
+      print('⚠️ الخدمة غير متاحة، استخدام التخزين المحلي: $e');
+      final prefs = await SharedPreferences.getInstance();
+      final key = '$_suggestionsPrefix$checkpointId';
+      
+      final suggestions = prefs.getStringList(key) ?? [];
+      final Map<String, int> cityVotes = {};
+      
+      for (final suggestion in suggestions) {
+        final parts = suggestion.split('|');
+        if (parts.length >= 3) {
+          final city = parts[0];
+          cityVotes[city] = (cityVotes[city] ?? 0) + 1;
+        }
       }
+      
+      return cityVotes;
     }
-    
-    return cityVotes;
   }
   
   /// Get the most voted city for a checkpoint
@@ -76,14 +96,20 @@ class CityVotingService {
   
   /// Check if user has already voted for this checkpoint
   static Future<bool> hasUserVoted(String checkpointId, String userDeviceId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final key = '$_suggestionsPrefix$checkpointId';
-    
-    final suggestions = prefs.getStringList(key) ?? [];
-    
-    return suggestions.any(
-      (suggestion) => suggestion.split('|')[1] == userDeviceId,
-    );
+    try {
+      // Check backend first
+      return await ApiService.hasUserVotedForCity(checkpointId, userDeviceId);
+    } catch (e) {
+      // Fallback to local storage
+      final prefs = await SharedPreferences.getInstance();
+      final key = '$_suggestionsPrefix$checkpointId';
+      
+      final suggestions = prefs.getStringList(key) ?? [];
+      
+      return suggestions.any(
+        (suggestion) => suggestion.split('|')[1] == userDeviceId,
+      );
+    }
   }
   
   /// Get total vote count for a checkpoint
@@ -231,14 +257,6 @@ class CityVotingService {
   
   /// Get a unique device ID
   static Future<String> getDeviceId() async {
-    final prefs = await SharedPreferences.getInstance();
-    String? deviceId = prefs.getString('device_id');
-    
-    if (deviceId == null) {
-      deviceId = DateTime.now().millisecondsSinceEpoch.toString();
-      await prefs.setString('device_id', deviceId);
-    }
-    
-    return deviceId;
+    return await ApiService.getOrCreateDeviceId();
   }
 }

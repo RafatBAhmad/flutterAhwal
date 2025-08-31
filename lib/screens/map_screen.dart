@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import '../models/checkpoint.dart';
 import '../services/api_service.dart';
+import '../services/cache_service.dart';
 import '../utils/checkpoint_statistics_utils.dart';
+import '../utils/data_filter_utils.dart';
 import '../widgets/checkpoint_history_dialog.dart';
 
 class MapScreen extends StatefulWidget {
@@ -42,33 +44,28 @@ class _MapScreenState extends State<MapScreen> {
     try {
       print('🔄 MapScreen: Starting data load...');
 
-      // 🔥 استخدام نفس API كما في باقي الصفحات
-      List<Checkpoint> data;
-
-      try {
-        data = await ApiService.getLatestCheckpointsOnly();
-        print('✅ MapScreen: getLatestCheckpointsOnly succeeded');
-      } catch (e) {
-        print('❌ MapScreen: getLatestCheckpointsOnly failed: $e');
-        try {
-          data = await ApiService.fetchLatestOnly();
-          print('✅ MapScreen: fetchLatestOnly succeeded');
-        } catch (e2) {
-          print('❌ MapScreen: fetchLatestOnly failed: $e2');
-          data = await ApiService.getAllCheckpoints();
-          print('✅ MapScreen: getAllCheckpoints succeeded');
-        }
+      // محاولة تحميل من الكاش أولاً
+      final cachedData = await CacheService.getCachedCheckpoints();
+      
+      if (cachedData != null && cachedData.isNotEmpty) {
+        // استخدام الكاش فوراً
+        _updateUIWithData(cachedData);
+        print('📋 MapScreen: Loaded from cache (${cachedData.length} checkpoints)');
+        
+        // تحديث في الخلفية
+        _backgroundRefresh();
+        return;
       }
 
-      setState(() {
-        checkpoints = data;
-        cities = CheckpointStatisticsUtils.getAvailableCities(data);
-        selectedCity = "الكل";
-        currentStatistics =
-            CheckpointStatisticsUtils.calculateStatistics(getFilteredCheckpoints());
-        isLoading = false;
-      });
+      // إذا لم يكن هناك كاش، تحميل من API
+      final data = await _fetchDataFromAPI();
+      
+      // حفظ في الكاش
+      if (data.isNotEmpty) {
+        await CacheService.cacheCheckpoints(data);
+      }
 
+      _updateUIWithData(data);
       print('🎯 MapScreen loaded ${data.length} checkpoints');
 
     } catch (e) {
@@ -77,7 +74,7 @@ class _MapScreenState extends State<MapScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("❌ فشل في تحميل البيانات: $e"),
+            content: const Text("❌ تعذر تحميل البيانات. تحقق من اتصال الإنترنت"),
             backgroundColor: Colors.red,
             action: SnackBarAction(
               label: 'إعادة المحاولة',
@@ -89,8 +86,62 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  // استخراج منطق API
+  Future<List<Checkpoint>> _fetchDataFromAPI() async {
+    try {
+      final data = await ApiService.getLatestCheckpointsOnly();
+      print('✅ MapScreen: getLatestCheckpointsOnly succeeded');
+      return data;
+    } catch (e) {
+      print('❌ MapScreen: getLatestCheckpointsOnly failed: $e');
+      try {
+        final data = await ApiService.fetchLatestOnly();
+        print('✅ MapScreen: fetchLatestOnly succeeded');
+        return data;
+      } catch (e2) {
+        print('❌ MapScreen: fetchLatestOnly failed: $e2');
+        final data = await ApiService.getAllCheckpoints();
+        print('✅ MapScreen: getAllCheckpoints succeeded');
+        return data;
+      }
+    }
+  }
+
+  // تحديث في الخلفية
+  Future<void> _backgroundRefresh() async {
+    try {
+      final data = await _fetchDataFromAPI();
+      
+      if (data.isNotEmpty) {
+        await CacheService.cacheCheckpoints(data);
+        _updateUIWithData(data);
+      }
+    } catch (e) {
+      print('Background refresh failed: $e');
+    }
+  }
+
+  // تحديث الواجهة
+  void _updateUIWithData(List<Checkpoint> data) {
+    setState(() {
+      checkpoints = data;
+      cities = CheckpointStatisticsUtils.getAvailableCities(data);
+      selectedCity ??= "الكل";
+      currentStatistics =
+          CheckpointStatisticsUtils.calculateStatistics(getFilteredCheckpoints());
+      isLoading = false;
+    });
+  }
+
   List<Checkpoint> getFilteredCheckpoints() {
-    return CheckpointStatisticsUtils.filterByCity(checkpoints, selectedCity);
+    // 🔥 فلترة البيانات القديمة أولاً (أكثر من يومين)
+    List<Checkpoint> recentCheckpoints = DataFilterUtils.filterRecentCheckpoints(
+      checkpoints,
+      maxHours: 48,
+    );
+    
+    // ثم فلترة حسب المدينة
+    return CheckpointStatisticsUtils.filterByCity(recentCheckpoints, selectedCity);
   }
 
   // 🔥 إضافة دالة تشخيص للخريطة
@@ -112,6 +163,7 @@ class _MapScreenState extends State<MapScreen> {
               Text('سالك: ${currentStatistics!.open}'),
               Text('مغلق: ${currentStatistics!.closed}'),
               Text('ازدحام: ${currentStatistics!.congestion}'),
+              Text('حاجز: ${currentStatistics!.checkpoint}'),
             ],
             const SizedBox(height: 8),
             Text('حالة التحميل: ${isLoading ? "جاري التحميل" : "مكتمل"}'),
@@ -173,8 +225,9 @@ class _MapScreenState extends State<MapScreen> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      body: Column(
-        children: [
+      body: SafeArea(
+        child: Column(
+          children: [
           // شريط التحكم
           Container(
             padding: const EdgeInsets.all(16),
@@ -270,7 +323,7 @@ class _MapScreenState extends State<MapScreen> {
                                 padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
                                 margin: const EdgeInsets.symmetric(vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: isSelected 
+                                  color: isSelected
                                       ? theme.primaryColor.withValues(alpha: 0.1)
                                       : Colors.transparent,
                                   borderRadius: BorderRadius.circular(8),
@@ -284,8 +337,8 @@ class _MapScreenState extends State<MapScreen> {
                                     Icon(
                                       city == "الكل" ? Icons.all_inclusive : Icons.location_on,
                                       size: 20,
-                                      color: isSelected 
-                                          ? theme.primaryColor 
+                                      color: isSelected
+                                          ? theme.primaryColor
                                           : (theme.brightness == Brightness.dark ? Colors.grey[400] : Colors.grey[600]),
                                     ),
                                     const SizedBox(width: 12),
@@ -294,11 +347,11 @@ class _MapScreenState extends State<MapScreen> {
                                         city,
                                         textDirection: TextDirection.rtl,
                                         style: TextStyle(
-                                          fontWeight: isSelected 
-                                              ? FontWeight.bold 
+                                          fontWeight: isSelected
+                                              ? FontWeight.bold
                                               : FontWeight.w500,
-                                          color: isSelected 
-                                              ? theme.primaryColor 
+                                          color: isSelected
+                                              ? theme.primaryColor
                                               : theme.textTheme.bodyLarge?.color,
                                           fontSize: 16,
                                         ),
@@ -382,7 +435,7 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'تأكد من تشغيل الخادم المحلي',
+                    'تحقق من اتصال الإنترنت',
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 24),
@@ -396,69 +449,100 @@ class _MapScreenState extends State<MapScreen> {
             )
                 : Column(
               children: [
-                // إحصائيات سريعة
+                // إحصائيات سريعة قابلة للضغط
                 Container(
                   margin: const EdgeInsets.all(16),
-                  child: Card(
-                    elevation: 4,
-                    shape: RoundedRectangleBorder(
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
                       borderRadius: BorderRadius.circular(12),
-                    ),
-                    color: theme.cardColor,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
+                      onTap: () => _showCheckpointsListDialog(),
+                      child: Card(
+                        elevation: 4,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        color: theme.cardColor,
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(
-                                Icons.bar_chart,
-                                color: theme.primaryColor,
-                                size: 24,
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.bar_chart,
+                                    color: theme.primaryColor,
+                                    size: 24,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'إحصائيات الحواجز',
+                                      style: theme.textTheme.titleLarge
+                                          ?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                      textDirection: TextDirection.rtl,
+                                    ),
+                                  ),
+                                  Icon(
+                                    Icons.touch_app,
+                                    color: theme.primaryColor.withValues(alpha: 0.7),
+                                    size: 20,
+                                  ),
+                                ],
                               ),
-                              const SizedBox(width: 8),
+                              const SizedBox(height: 8),
                               Text(
-                                'إحصائيات الحواجز',
-                                style: theme.textTheme.titleLarge
-                                    ?.copyWith(
-                                  fontWeight: FontWeight.bold,
+                                'اضغط لعرض قائمة الحواجز',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.primaryColor,
+                                  fontSize: 12,
                                 ),
                                 textDirection: TextDirection.rtl,
                               ),
+                              const SizedBox(height: 16),
+                              Row(
+                                mainAxisAlignment:
+                                MainAxisAlignment.spaceEvenly,
+                                children: [
+                                  Expanded(
+                                    child: _buildCompactStatusCard(
+                                        'سالك',
+                                        Colors.green,
+                                        currentStatistics?.open ?? 0,
+                                        theme),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: _buildCompactStatusCard(
+                                        'مغلق',
+                                        Colors.red,
+                                        currentStatistics?.closed ?? 0,
+                                        theme),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: _buildCompactStatusCard(
+                                        'ازدحام',
+                                        Colors.orange,
+                                        currentStatistics?.congestion ?? 0,
+                                        theme),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: _buildCompactStatusCard(
+                                        'حاجز',
+                                        Colors.purple,
+                                        currentStatistics?.checkpoint ?? 0,
+                                        theme),
+                                  ),
+                                ],
+                              ),
                             ],
                           ),
-                          const SizedBox(height: 16),
-                          Row(
-                            mainAxisAlignment:
-                            MainAxisAlignment.spaceEvenly,
-                            children: [
-                              Expanded(
-                                child: _buildCompactStatusCard(
-                                    'سالك',
-                                    Colors.green,
-                                    currentStatistics?.open ?? 0,
-                                    theme),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _buildCompactStatusCard(
-                                    'مغلق',
-                                    Colors.red,
-                                    currentStatistics?.closed ?? 0,
-                                    theme),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _buildCompactStatusCard(
-                                    'ازدحام',
-                                    Colors.orange,
-                                    currentStatistics?.congestion ?? 0,
-                                    theme),
-                              ),
-                            ],
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -473,17 +557,23 @@ class _MapScreenState extends State<MapScreen> {
                         Container(
                           padding: const EdgeInsets.all(32),
                           decoration: BoxDecoration(
-                            color: theme.cardColor.withValues(alpha: (0.1)),
+                            color: theme.brightness == Brightness.dark
+                      ? theme.cardColor.withValues(alpha: 0.15)
+                      : theme.cardColor.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(100),
                             border: Border.all(
-                              color: theme.dividerColor,
+                              color: theme.brightness == Brightness.dark
+                                  ? theme.dividerColor.withValues(alpha: 0.4)
+                                  : theme.dividerColor,
                               width: 2,
                             ),
                           ),
                           child: Icon(
                             Icons.map_outlined,
                             size: 80,
-                            color: theme.dividerColor,
+                            color: theme.brightness == Brightness.dark
+                                ? theme.dividerColor.withValues(alpha: 0.6)
+                                : theme.dividerColor,
                           ),
                         ),
                         const SizedBox(height: 16),
@@ -498,39 +588,17 @@ class _MapScreenState extends State<MapScreen> {
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 32),
                           child: Text(
-                            'إن شاء الله ستكون متاحة قريباً لعرض الحواجز على الخريطة التفاعلية',
+                            'ستكون متاحة قريباً إن شاء الله لعرض الحواجز على الخريطة التفاعلية',
                             textAlign: TextAlign.center,
                             style: theme.textTheme.bodyLarge?.copyWith(
                               height: 1.6,
                               fontSize: 16,
+                              color: theme.textTheme.bodyLarge?.color?.withValues(alpha: 0.8),
                             ),
                             textDirection: TextDirection.rtl,
                           ),
                         ),
-                        const SizedBox(height: 24),
-                        Container(
-                          margin: const EdgeInsets.only(bottom: 80), // إضافة مساحة كافية للبانر
-                          child: ElevatedButton.icon(
-                            onPressed: () => _showCheckpointsListDialog(),
-                            icon: const Icon(Icons.location_on, color: Colors.white),
-                            label: const Text(
-                              'عرض قائمة الحواجز',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: theme.primaryColor,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 24, vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(25),
-                              ),
-                              elevation: 4,
-                            ),
-                          ),
-                        ),
+                        const SizedBox(height: 32),
                       ],
                     ),
                   ),
@@ -539,6 +607,7 @@ class _MapScreenState extends State<MapScreen> {
             ),
           ),
         ],
+        ),
       ),
       backgroundColor: theme.scaffoldBackgroundColor,
     );
@@ -569,8 +638,8 @@ class _MapScreenState extends State<MapScreen> {
             style: TextStyle(
               fontSize: 12,
               color: theme.brightness == Brightness.dark
-                  ? Colors.white
-                  : Colors.black,
+                  ? Colors.white.withValues(alpha: 0.9)
+                  : Colors.black87,
               fontWeight: FontWeight.w600,
             ),
             textDirection: TextDirection.rtl,
@@ -582,7 +651,7 @@ class _MapScreenState extends State<MapScreen> {
 
   void _showCheckpointsListDialog() {
     final filteredCheckpoints = getFilteredCheckpoints();
-    
+
     showDialog(
       context: context,
       builder: (context) => Dialog(
@@ -637,38 +706,38 @@ class _MapScreenState extends State<MapScreen> {
               Flexible(
                 child: filteredCheckpoints.isEmpty
                     ? const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(32),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.location_off,
-                                size: 48,
-                                color: Colors.grey,
-                              ),
-                              SizedBox(height: 16),
-                              Text(
-                                'لا توجد حواجز',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                                textDirection: TextDirection.rtl,
-                              ),
-                            ],
-                          ),
+                  child: Padding(
+                    padding: EdgeInsets.all(32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.location_off,
+                          size: 48,
+                          color: Colors.grey,
                         ),
-                      )
+                        SizedBox(height: 16),
+                        Text(
+                          'لا توجد حواجز',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textDirection: TextDirection.rtl,
+                        ),
+                      ],
+                    ),
+                  ),
+                )
                     : ListView.builder(
-                        padding: const EdgeInsets.all(16),
-                        shrinkWrap: true,
-                        itemCount: filteredCheckpoints.length,
-                        itemBuilder: (context, index) {
-                          final checkpoint = filteredCheckpoints[index];
-                          return _buildCheckpointListItem(checkpoint);
-                        },
-                      ),
+                  padding: const EdgeInsets.all(16),
+                  shrinkWrap: true,
+                  itemCount: filteredCheckpoints.length,
+                  itemBuilder: (context, index) {
+                    final checkpoint = filteredCheckpoints[index];
+                    return _buildCheckpointListItem(checkpoint);
+                  },
+                ),
               ),
 
               // Footer
@@ -834,6 +903,8 @@ class _MapScreenState extends State<MapScreen> {
         return Colors.red;
       case 'ازدحام':
         return Colors.orange;
+      case 'حاجز':
+        return Colors.purple;
       default:
         return Colors.grey;
     }

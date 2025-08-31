@@ -39,76 +39,72 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   void _setupAnimations() {
-    // تحريك اللوجو
+    // تحريك اللوجو - أسرع
     _logoController = AnimationController(
-      duration: const Duration(milliseconds: 1500),
+      duration: const Duration(milliseconds: 800),
       vsync: this,
     );
 
     _logoScale = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _logoController,
-        curve: Curves.elasticOut,
+        curve: Curves.bounceOut,
       ),
     );
 
     _logoOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _logoController,
-        curve: const Interval(0.0, 0.5, curve: Curves.easeIn),
+        curve: const Interval(0.0, 0.6, curve: Curves.easeIn),
       ),
     );
 
-    // تحريك النص
+    // تحريك النص - أسرع
     _textController = AnimationController(
-      duration: const Duration(milliseconds: 800),
+      duration: const Duration(milliseconds: 500),
       vsync: this,
     );
 
     _textOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _textController,
-        curve: Curves.easeIn,
+        curve: Curves.easeInOut,
       ),
     );
 
-    // شريط التقدم
+    // شريط التقدم - أسرع وأكثر سلاسة
     _progressController = AnimationController(
-      duration: const Duration(milliseconds: 2000),
+      duration: const Duration(milliseconds: 1000),
       vsync: this,
     );
 
     _progressValue = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _progressController,
-        curve: Curves.easeInOut,
+        curve: Curves.easeOut,
       ),
     );
   }
 
   void _startSplashSequence() async {
-    // تشغيل تحريك اللوجو
+    // تشغيل التحريكات بشكل متزامن لتوفير الوقت
     _logoController.forward();
-
-    // انتظار 500ms ثم تشغيل النص
-    await Future.delayed(const Duration(milliseconds: 500));
+    await Future.delayed(const Duration(milliseconds: 300));
     _textController.forward();
-
-    // انتظار 200ms ثم تشغيل شريط التقدم
-    await Future.delayed(const Duration(milliseconds: 200));
     _progressController.forward();
 
-    // انتظار انتهاء جميع التحريكات ثم الانتقال
-    await Future.delayed(const Duration(milliseconds: 2500));
+    // انتظار وقت أقل للانتقال السريع (تقليل من 3.2 ثانية إلى 1.5 ثانية)
+    await Future.delayed(const Duration(milliseconds: 1200));
 
     if (mounted) {
+      // استخدام transition أسرع
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
           pageBuilder: (context, animation, secondaryAnimation) => widget.nextScreen,
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return FadeTransition(opacity: animation, child: child);
           },
-          transitionDuration: const Duration(milliseconds: 500),
+          transitionDuration: const Duration(milliseconds: 300),
         ),
       );
     }
@@ -201,8 +197,26 @@ class _SplashScreenState extends State<SplashScreen>
                                   textDirection: TextDirection.rtl,
                                 ),
                                 SizedBox(height: 8),
+                                Text('سبحان الله وبحمده سبحان الله العظيم',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    color: Colors.white70,
+                                    fontWeight: FontWeight.w300,
+                                  ),
+                                  textDirection: TextDirection.rtl,
+                                ),
+                                Text('اللهم صل وسلم وبارك وأنعم على عبدك محمد',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    color: Colors.white70,
+                                    fontWeight: FontWeight.w300,
+                                  ),
+                                  textDirection: TextDirection.rtl,
+                                ),
                                 Text(
-                                  'تابع حالة الحواجز في الوقت الفعلي',
+
+                                     ' تابع حالة الحواجز في الوقت الفعلي',
+
                                   style: TextStyle(
                                     fontSize: 16,
                                     color: Colors.white70,

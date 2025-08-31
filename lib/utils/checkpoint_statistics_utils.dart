@@ -11,6 +11,7 @@ class CheckpointStatisticsUtils {
     'سالكه': CheckpointStatusCategory.open,
     'مغلق': CheckpointStatusCategory.closed,
     'ازدحام': CheckpointStatusCategory.congestion,
+    'حاجز': CheckpointStatusCategory.checkpoint,
   };
 
   /// تحديد فئة الحالة بناءً على النص
@@ -37,6 +38,7 @@ class CheckpointStatisticsUtils {
     int openCount = 0;
     int closedCount = 0;
     int congestionCount = 0;
+    int checkpointCount = 0;
     int unknownCount = 0;
 
     for (final checkpoint in checkpoints) {
@@ -50,6 +52,9 @@ class CheckpointStatisticsUtils {
         case CheckpointStatusCategory.congestion:
           congestionCount++;
           break;
+        case CheckpointStatusCategory.checkpoint:
+          checkpointCount++;
+          break;
         case CheckpointStatusCategory.unknown:
           unknownCount++;
           break;
@@ -61,6 +66,7 @@ class CheckpointStatisticsUtils {
       open: openCount,
       closed: closedCount,
       congestion: congestionCount,
+      checkpoint: checkpointCount,
       unknown: unknownCount,
     );
   }
@@ -112,6 +118,7 @@ enum CheckpointStatusCategory {
   open,      // مفتوح/سالك
   closed,    // مغلق
   congestion, // ازدحام
+  checkpoint, // حاجز
   unknown,   // غير معروف
 }
 
@@ -121,6 +128,7 @@ class CheckpointStatistics {
   final int open;
   final int closed;
   final int congestion;
+  final int checkpoint;
   final int unknown;
 
   const CheckpointStatistics({
@@ -128,12 +136,13 @@ class CheckpointStatistics {
     required this.open,
     required this.closed,
     required this.congestion,
+    required this.checkpoint,
     required this.unknown,
   });
 
   @override
   String toString() {
-    return 'CheckpointStatistics(total: $total, open: $open, closed: $closed, congestion: $congestion, unknown: $unknown)';
+    return 'CheckpointStatistics(total: $total, open: $open, closed: $closed, congestion: $congestion, checkpoint: $checkpoint, unknown: $unknown)';
   }
 
   /// تحويل إلى Map للتصدير
@@ -143,6 +152,7 @@ class CheckpointStatistics {
       'open': open,
       'closed': closed,
       'congestion': congestion,
+      'checkpoint': checkpoint,
       'unknown': unknown,
     };
   }

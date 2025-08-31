@@ -2,7 +2,7 @@ name: tariqi_app
 description: تطبيق نمط الحياة الذكي لتحسين رحلاتك اليومية في فلسطين
 publish_to: "none"
 # 🔥 تحديث معلومات الإصدار للنشر
-version: 1.0.1+2
+version: 1.0.8+9
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -12,9 +12,7 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
-  flutter_map: ^6.1.0
   vibration: ^3.1.3
-  latlong2: ^0.9.0
   cupertino_icons: ^1.0.2
   http: ^1.2.0
   fluttertoast: ^8.2.4

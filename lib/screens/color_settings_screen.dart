@@ -12,6 +12,7 @@ class _ColorSettingsScreenState extends State<ColorSettingsScreen> {
   late Color openColor;
   late Color closedColor;
   late Color congestionColor;
+  late Color checkpointColor;
 
   bool isLoading = true;
 
@@ -49,6 +50,7 @@ class _ColorSettingsScreenState extends State<ColorSettingsScreen> {
         openColor = Color(colors['openColor']!);
         closedColor = Color(colors['closedColor']!);
         congestionColor = Color(colors['congestionColor']!);
+        checkpointColor = Color(colors['checkpointColor']!);
         isLoading = false;
       });
     } catch (e) {
@@ -56,6 +58,7 @@ class _ColorSettingsScreenState extends State<ColorSettingsScreen> {
         openColor = Colors.green;
         closedColor = Colors.red;
         congestionColor = Colors.orange;
+        checkpointColor = Colors.purple;
         isLoading = false;
       });
     }
@@ -66,6 +69,7 @@ class _ColorSettingsScreenState extends State<ColorSettingsScreen> {
       'openColor': openColor.value,
       'closedColor': closedColor.value,
       'congestionColor': congestionColor.value,
+      'checkpointColor': checkpointColor.value,
     };
 
     await CacheService.saveCustomColors(colors);
@@ -124,6 +128,9 @@ class _ColorSettingsScreenState extends State<ColorSettingsScreen> {
                         break;
                       case 'ازدحام':
                         congestionColor = color;
+                        break;
+                      case 'حاجز':
+                        checkpointColor = color;
                         break;
                     }
                   });
@@ -270,6 +277,8 @@ class _ColorSettingsScreenState extends State<ColorSettingsScreen> {
         return Icons.cancel;
       case 'ازدحام':
         return Icons.warning;
+      case 'حاجز':
+        return Icons.block;
       default:
         return Icons.help;
     }
@@ -352,6 +361,8 @@ class _ColorSettingsScreenState extends State<ColorSettingsScreen> {
             _buildColorCard('حالة مغلق', closedColor, 'مغلق'),
             const SizedBox(height: 12),
             _buildColorCard('حالة ازدحام', congestionColor, 'ازدحام'),
+            const SizedBox(height: 12),
+            _buildColorCard('حالة حاجز', checkpointColor, 'حاجز'),
 
             const SizedBox(height: 24),
 
@@ -386,6 +397,8 @@ class _ColorSettingsScreenState extends State<ColorSettingsScreen> {
                     _buildPreviewItem('حاجز الخليل', 'مغلق', closedColor),
                     const SizedBox(height: 8),
                     _buildPreviewItem('حاجز رام الله', 'ازدحام', congestionColor),
+                    const SizedBox(height: 8),
+                    _buildPreviewItem('حاجز بيت لحم', 'حاجز', checkpointColor),
                   ],
                 ),
               ),

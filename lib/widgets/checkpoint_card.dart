@@ -3,6 +3,7 @@ import '../models/checkpoint.dart';
 import '../services/share_service.dart';
 import '../services/cache_service.dart';
 import '../services/city_voting_service.dart';
+import '../services/status_suggestion_service.dart';
 import '../utils/theme.dart';
 
 class CheckpointCard extends StatefulWidget {
@@ -285,16 +286,67 @@ class _CheckpointCardState extends State<CheckpointCard> {
                               ),
                               const SizedBox(width: 6),
                               Flexible(
-                                child: Text(
-                                  widget.checkpoint.status,
-                                  style: TextStyle(
-                                    color: _getStatusColor(),
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                  textDirection: TextDirection.rtl,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
+                                child: _shouldShowStatusSuggestion()
+                                    ? Row(
+                                        children: [
+                                          Text(
+                                            widget.checkpoint.status,
+                                            style: TextStyle(
+                                              color: _getStatusColor(),
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                            textDirection: TextDirection.rtl,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          GestureDetector(
+                                            onTap: () => _showStatusSuggestionDialog(context),
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(
+                                                horizontal: 4,
+                                                vertical: 2,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: Colors.orange.withValues(alpha: 0.1),
+                                                borderRadius: BorderRadius.circular(6),
+                                                border: Border.all(
+                                                  color: Colors.orange.withValues(alpha: 0.3),
+                                                ),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(
+                                                    Icons.help_outline,
+                                                    size: 10,
+                                                    color: Colors.orange[700],
+                                                  ),
+                                                  const SizedBox(width: 2),
+                                                  Text(
+                                                    'تحديث',
+                                                    style: TextStyle(
+                                                      fontSize: 8,
+                                                      color: Colors.orange[700],
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      )
+                                    : Text(
+                                        widget.checkpoint.status,
+                                        style: TextStyle(
+                                          color: _getStatusColor(),
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        textDirection: TextDirection.rtl,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
                               ),
                             ],
                           ),
@@ -525,5 +577,36 @@ class _CheckpointCardState extends State<CheckpointCard> {
         deviceId,
       );
     }
+  }
+
+  void _showStatusSuggestionDialog(BuildContext context) async {
+    final deviceId = await StatusSuggestionService.getDeviceId();
+    if (context.mounted) {
+      StatusSuggestionService.showStatusVotingDialog(
+        context,
+        widget.checkpoint,
+        deviceId,
+      );
+    }
+  }
+
+  bool _shouldShowStatusSuggestion() {
+    final status = widget.checkpoint.status.toLowerCase();
+    
+    // Show suggestion button for unknown or questionable statuses
+    return status.contains('غير معروف') ||
+           status.contains('unknown') ||
+           status.isEmpty ||
+           status == 'null' ||
+           // Also show for statuses that might be outdated (more than 6 hours old)
+           _isStatusPotentiallyOutdated();
+  }
+
+  bool _isStatusPotentiallyOutdated() {
+    final lastUpdate = widget.checkpoint.effectiveAtDateTime ?? widget.checkpoint.updatedAtDateTime;
+    if (lastUpdate == null) return true;
+    
+    final hoursSinceUpdate = DateTime.now().difference(lastUpdate).inHours;
+    return hoursSinceUpdate > 6; // Show suggestion if status is older than 6 hours
   }
 }

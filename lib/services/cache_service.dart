@@ -5,11 +5,12 @@ import '../models/checkpoint.dart';
 class CacheService {
   static const String _checkpointsKey = 'cached_checkpoints';
   static const String _lastUpdateKey = 'last_update_time';
+  static const String _lastFetchAttemptKey = 'last_fetch_attempt_time';
   static const String _appUsageKey = 'app_usage_stats';
   static const String _searchHistoryKey = 'search_history';
 
-  // مدة انتهاء صلاحية الكاش (5 دقائق)
-  static const Duration _cacheExpiration = Duration(minutes: 5);
+  // مدة انتهاء صلاحية الكاش (10 دقائق لتوازن أفضل بين الأداء والحداثة)
+  static const Duration _cacheExpiration = Duration(minutes: 10);
 
   // حفظ الحواجز في الكاش
   static Future<void> cacheCheckpoints(List<Checkpoint> checkpoints) async {
@@ -29,6 +30,7 @@ class CacheService {
 
       await prefs.setString(_checkpointsKey, jsonEncode(checkpointsJson));
       await prefs.setString(_lastUpdateKey, DateTime.now().toIso8601String());
+      await prefs.setString(_lastFetchAttemptKey, DateTime.now().toIso8601String());
     } catch (e) {
       // في حالة الفشل، لا نفعل شيء
     }
@@ -53,6 +55,30 @@ class CacheService {
 
       final List<dynamic> jsonList = jsonDecode(cachedData);
       return jsonList.map((json) => Checkpoint.fromJson(json)).toList();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // حفظ وقت آخر محاولة استعلام (حتى لو فشلت)
+  static Future<void> updateLastFetchAttempt() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_lastFetchAttemptKey, DateTime.now().toIso8601String());
+    } catch (e) {
+      // تجاهل الأخطاء
+    }
+  }
+
+  // الحصول على وقت آخر محاولة استعلام
+  static Future<DateTime?> getLastFetchAttempt() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastFetchStr = prefs.getString(_lastFetchAttemptKey);
+      if (lastFetchStr != null) {
+        return DateTime.parse(lastFetchStr);
+      }
+      return null;
     } catch (e) {
       return null;
     }
@@ -242,6 +268,7 @@ class CacheService {
           'openColor': 0xFF4CAF50,   // أخضر
           'closedColor': 0xFFF44336, // أحمر
           'congestionColor': 0xFFFF9800, // برتقالي
+          'checkpointColor': 0xFF9C27B0, // بنفسجي
         };
       }
 
@@ -251,6 +278,7 @@ class CacheService {
         'openColor': 0xFF4CAF50,
         'closedColor': 0xFFF44336,
         'congestionColor': 0xFFFF9800,
+        'checkpointColor': 0xFF9C27B0,
       };
     }
   }

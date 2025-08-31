@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:flutter/foundation.dart';
 import '../services/ad_helper.dart';
+import '../utils/ads_config.dart';
 
 class NativeAdCard extends StatefulWidget {
   const NativeAdCard({super.key});
@@ -17,7 +18,12 @@ class _NativeAdCardState extends State<NativeAdCard> {
   @override
   void initState() {
     super.initState();
-    _loadNativeAd();
+    // 🔥 تحقق من إعدادات الإعلانات قبل التحميل
+    if (AdsConfig.shouldShowAd(adLocation: 'native_ad')) {
+      _loadNativeAd();
+    } else {
+      debugPrint('🚫 الإعلانات معطلة - لن يتم تحميل الإعلان الأصلي');
+    }
   }
 
   void _loadNativeAd() {
@@ -77,6 +83,11 @@ class _NativeAdCardState extends State<NativeAdCard> {
   Widget build(BuildContext context) {
     // على الويب، لا نعرض شيء
     if (kIsWeb) {
+      return const SizedBox.shrink();
+    }
+
+    // 🔥 إذا كانت الإعلانات معطلة، لا نعرض شيء
+    if (!AdsConfig.shouldShowAd(adLocation: 'native_ad')) {
       return const SizedBox.shrink();
     }
 

@@ -4,14 +4,18 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/checkpoint.dart';
+import 'cache_service.dart';
 
 class ApiService {
   // 🔥 إعدادات الخادم المحلي
   static const List<String> _baseUrls = [
-    'http://192.168.1.105:8081/api/v1/checkpoints',
-    'http://localhost:8081/api/v1/checkpoints',
-    'http://127.0.0.1:8081/api/v1/checkpoints',
-    'http://10.0.2.2:8081/api/v1/checkpoints', // للمحاكي Android
+    'https://backendspringboot-production-46d6.up.railway.app/api/v1/checkpoints',
+  ];
+  
+  // Base URLs for suggestions
+  static const List<String> _suggestionsBaseUrls = [
+    'https://backendspringboot-production-46d6.up.railway.app/api/city-suggestions',
+    'https://backendspringboot-production-46d6.up.railway.app/api/status-suggestions',
   ];
 
   static const Duration timeoutDuration = Duration(seconds: 10);
@@ -134,6 +138,9 @@ class ApiService {
 
   // 🔥 دالة fetch محسنة مع logs مفصلة
   static Future<List<Checkpoint>> _fetchCheckpoints(String endpoint) async {
+    // حفظ وقت المحاولة في البداية
+    await CacheService.updateLastFetchAttempt();
+    
     String baseUrl = await _getWorkingBaseUrl();
     Uri uri = Uri.parse('$baseUrl$endpoint');
 
@@ -193,35 +200,31 @@ class ApiService {
           throw Exception('خطأ في تحليل البيانات: $jsonError');
         }
       } else if (response.statusCode == 404) {
-        print('❌ Endpoint غير موجود: $endpoint');
+        print('❌ الخدمة غير متوفرة: $endpoint');
         print('📄 Response body: ${response.body}');
-        throw Exception('الخدمة غير متوفرة (404): $endpoint');
+        throw Exception('الخدمة غير متوفرة حالياً');
       } else if (response.statusCode >= 500) {
         print('🔧 خطأ خادم ${response.statusCode}:');
         print('📄 Error details: ${response.body}');
-        throw Exception('خطأ في الخادم المحلي (${response.statusCode})');
+        throw Exception('خطأ في الخادم. حاول مرة أخرى لاحقاً');
       } else {
         print('⚠️ استجابة غير متوقعة ${response.statusCode}:');
         print('📄 Response: ${response.body}');
-        throw Exception('خطأ في الاتصال (${response.statusCode})');
+        throw Exception('حدث خطأ غير متوقع. حاول مرة أخرى');
       }
     } on SocketException catch (e) {
       print('❌ خطأ شبكة: $e');
-      print('💡 تأكد من:');
-      print('   - تشغيل Spring Boot على port 8081');
-      print('   - اتصال WiFi نشط');
-      print('   - إيقاف Firewall أو السماح للـ port');
-      throw Exception('لا يمكن الوصول للخادم المحلي. تأكد من تشغيل Backend');
+      throw Exception('تعذر الاتصال بالخادم. تحقق من اتصال الإنترنت');
     } on TimeoutException catch (e) {
       print('❌ انتهت مهلة الاتصال: $e');
-      throw Exception('انتهت مهلة الاتصال بالخادم المحلي');
+      throw Exception('انتهت مهلة الاتصال. حاول مرة أخرى');
     } catch (e) {
       print('❌ خطأ غير متوقع: $e');
-      throw Exception('خطأ في الاتصال المحلي: ${e.toString()}');
+      throw Exception('حدث خطأ أثناء تحميل البيانات');
     }
   }
 
-  // 🔥 استخدام endpoints الصحيحة من Spring Boot
+  // 🔥 استخدام API الخاص بالتطبيق
 
   /// جلب جميع الحواجز مع آخر حالة لكل حاجز
   static Future<List<Checkpoint>> getAllCheckpoints() async {
@@ -378,43 +381,32 @@ class ApiService {
     return _getFallbackData();
   }
 
-  // 🔥 بيانات احتياطية محسنة للتطوير
+  // 🔥 بيانات احتياطية للمستخدم النهائي
   static List<Checkpoint> _getFallbackData() {
-    print('🔄 استخدام بيانات احتياطية - الخادم غير متاح');
+    print('🔄 استخدام وضع عدم الاتصال');
     final now = DateTime.now();
     return [
       Checkpoint(
-        id: 'debug_1',
-        name: '🔧 خادم التطوير المحلي غير متاح',
-        city: 'تشخيص',
+        id: 'offline_1',
+        name: 'تعذر الاتصال بالخادم',
+        city: 'إشعار',
         latitude: 0.0,
         longitude: 0.0,
-        status: 'تأكد من تشغيل Spring Boot على المنفذ 8081',
+        status: 'لا يوجد اتصال بالإنترنت',
         updatedAt: now.toIso8601String(),
         effectiveAt: now.toIso8601String(),
-        sourceText: 'تحقق من:\n1. تشغيل Spring Boot\n2. اتصال الشبكة\n3. إعدادات الـ Firewall',
+        sourceText: 'يرجى التحقق من اتصال الإنترنت والمحاولة مرة أخرى',
       ),
       Checkpoint(
-        id: 'debug_2',
-        name: '💡 نصائح للمطورين',
-        city: 'مساعدة',
+        id: 'offline_2',
+        name: 'وضع عدم الاتصال',
+        city: 'معلومات',
         latitude: 0.0,
         longitude: 0.0,
-        status: 'راجع Console logs للتفاصيل',
+        status: 'غير متصل',
         updatedAt: now.toIso8601String(),
         effectiveAt: now.toIso8601String(),
-        sourceText: 'تحقق من الـ logs في Flutter console للمزيد من التفاصيل',
-      ),
-      Checkpoint(
-        id: 'debug_3',
-        name: '📊 اختبار البيانات',
-        city: 'نابلس',
-        latitude: 32.2211,
-        longitude: 35.2544,
-        status: 'سالكة',
-        updatedAt: now.subtract(const Duration(hours: 2)).toIso8601String(),
-        effectiveAt: now.subtract(const Duration(hours: 2)).toIso8601String(),
-        sourceText: 'هذه بيانات تجريبية لاختبار التطبيق',
+        sourceText: 'سيتم تحديث البيانات تلقائياً عند استعادة الاتصال بالإنترنت',
       ),
     ];
   }
@@ -496,18 +488,18 @@ class ApiService {
 
     if (successRate < 0.3) {
       recommendations.addAll([
-        'تأكد من تشغيل Spring Boot على المنفذ 8081',
-        'تحقق من اتصال الشبكة المحلية',
-        'تأكد من عدم حجب Firewall للمنفذ',
+        'تحقق من اتصال الإنترنت',
+        'أعد تشغيل التطبيق',
+        'حاول مرة أخرى لاحقاً',
       ]);
     } else if (successRate < 0.7) {
       recommendations.addAll([
-        'بعض الـ endpoints لا تعمل بشكل صحيح',
-        'تحقق من إعدادات قاعدة البيانات',
-        'راجع logs الخادم للأخطاء',
+        'بعض الخدمات غير متاحة حالياً',
+        'جرب إعادة تحديث البيانات',
+        'تواصل مع الدعم إذا استمرت المشكلة',
       ]);
     } else {
-      recommendations.add('الخادم يعمل بشكل ممتاز! ✅');
+      recommendations.add('جميع الخدمات تعمل بشكل ممتاز! ✅');
     }
 
     return recommendations;
@@ -665,5 +657,170 @@ class ApiService {
       'system_status': connectionInfo['is_connected'] ? 'صحي' : 'يحتاج فحص',
       'last_health_check': DateTime.now().toIso8601String(),
     };
+  }
+
+  // 🔥 ==== طرق الاقتراحات الجديدة ====
+  
+  /// إرسال اقتراح مدينة للخادم
+  static Future<bool> submitCitySuggestion({
+    required String checkpointId,
+    required String checkpointName,
+    required String suggestedCity,
+    required String userDeviceId,
+  }) async {
+    print('🔄 [API] إرسال اقتراح مدينة: $suggestedCity للحاجز: $checkpointName');
+    try {
+      final response = await http.post(
+        Uri.parse('https://backendspringboot-production-46d6.up.railway.app/api/city-suggestions/submit'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'checkpointId': checkpointId,
+          'checkpointName': checkpointName,
+          'suggestedCity': suggestedCity,
+          'userDeviceId': userDeviceId,
+        }),
+      ).timeout(timeoutDuration);
+
+      if (response.statusCode == 200) {
+        print('✅ تم إرسال اقتراح المدينة بنجاح');
+        return true;
+      } else if (response.statusCode == 400) {
+        final errorData = jsonDecode(response.body);
+        throw Exception(errorData['error'] ?? 'خطأ في الطلب');
+      } else {
+        throw Exception('فشل في إرسال الاقتراح: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('❌ فشل في إرسال اقتراح المدينة: $e');
+      rethrow;
+    }
+  }
+
+  /// جلب أصوات المدن لحاجز معين
+  static Future<Map<String, int>> getCityVotes(String checkpointId) async {
+    print('🔄 [API] جلب أصوات المدن للحاجز: $checkpointId');
+    try {
+      final response = await http.get(
+        Uri.parse('https://backendspringboot-production-46d6.up.railway.app/api/city-suggestions/votes/$checkpointId'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(timeoutDuration);
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        return data.map((key, value) => MapEntry(key, value as int));
+      } else {
+        throw Exception('فشل في جلب أصوات المدن: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('❌ فشل في جلب أصوات المدن: $e');
+      return {};
+    }
+  }
+
+  /// إرسال اقتراح حالة للخادم
+  static Future<bool> submitStatusSuggestion({
+    required String checkpointId,
+    required String checkpointName,
+    required String suggestedStatus,
+    required String userDeviceId,
+  }) async {
+    print('🔄 [API] إرسال اقتراح حالة: $suggestedStatus للحاجز: $checkpointName');
+    try {
+      final response = await http.post(
+        Uri.parse('https://backendspringboot-production-46d6.up.railway.app/api/status-suggestions/submit'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'checkpointId': checkpointId,
+          'checkpointName': checkpointName,
+          'suggestedStatus': suggestedStatus,
+          'userDeviceId': userDeviceId,
+        }),
+      ).timeout(timeoutDuration);
+
+      if (response.statusCode == 200) {
+        print('✅ تم إرسال اقتراح الحالة بنجاح');
+        return true;
+      } else if (response.statusCode == 400) {
+        final errorData = jsonDecode(response.body);
+        throw Exception(errorData['error'] ?? 'خطأ في الطلب');
+      } else {
+        throw Exception('فشل في إرسال الاقتراح: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('❌ فشل في إرسال اقتراح الحالة: $e');
+      rethrow;
+    }
+  }
+
+  /// جلب أصوات الحالات لحاجز معين
+  static Future<Map<String, int>> getStatusVotes(String checkpointId) async {
+    print('🔄 [API] جلب أصوات الحالات للحاجز: $checkpointId');
+    try {
+      final response = await http.get(
+        Uri.parse('https://backendspringboot-production-46d6.up.railway.app/api/status-suggestions/votes/$checkpointId'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(timeoutDuration);
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        return data.map((key, value) => MapEntry(key, value as int));
+      } else {
+        throw Exception('فشل في جلب أصوات الحالات: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('❌ فشل في جلب أصوات الحالات: $e');
+      return {};
+    }
+  }
+
+  /// فحص ما إذا كان المستخدم قد صوت للمدينة من قبل
+  static Future<bool> hasUserVotedForCity(String checkpointId, String userDeviceId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('https://backendspringboot-production-46d6.up.railway.app/api/city-suggestions/has-voted/$checkpointId/$userDeviceId'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(timeoutDuration);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['hasVoted'] ?? false;
+      }
+      return false;
+    } catch (e) {
+      print('❌ فشل في فحص تصويت المدينة: $e');
+      return false;
+    }
+  }
+
+  /// فحص ما إذا كان المستخدم قد صوت للحالة من قبل
+  static Future<bool> hasUserVotedForStatus(String checkpointId, String userDeviceId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('https://backendspringboot-production-46d6.up.railway.app/api/status-suggestions/has-voted/$checkpointId/$userDeviceId'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(timeoutDuration);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['hasVoted'] ?? false;
+      }
+      return false;
+    } catch (e) {
+      print('❌ فشل في فحص تصويت الحالة: $e');
+      return false;
+    }
+  }
+
+  /// إنشاء معرف جهاز فريد
+  static Future<String> getOrCreateDeviceId() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? deviceId = prefs.getString('device_id');
+    
+    if (deviceId == null) {
+      deviceId = 'device_${DateTime.now().millisecondsSinceEpoch}';
+      await prefs.setString('device_id', deviceId);
+    }
+    
+    return deviceId;
   }
 }

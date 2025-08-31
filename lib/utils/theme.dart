@@ -13,6 +13,7 @@ class AppTheme {
   static const Color statusOpen = Color(0xFF4CAF50);    // أخضر للسالك
   static const Color statusClosed = Color(0xFFF44336);  // أحمر للمغلق
   static const Color statusCongestion = Color(0xFFFF9800); // برتقالي للازدحام
+  static const Color statusCheckpoint = Color(0xFF9C27B0); // بنفسجي للحاجز
 
   // Theme النهاري المحسن
   static ThemeData get lightTheme {
@@ -681,6 +682,8 @@ class AppTheme {
           return Color(customColors['closedColor'] ?? statusClosed.value);
         case 'ازدحام':
           return Color(customColors['congestionColor'] ?? statusCongestion.value);
+        case 'حاجز':
+          return Color(customColors['checkpointColor'] ?? statusCheckpoint.value);
         default:
           return Colors.grey;
       }
@@ -696,6 +699,8 @@ class AppTheme {
         return statusClosed;
       case 'ازدحام':
         return statusCongestion;
+      case 'حاجز':
+        return statusCheckpoint;
       default:
         return Colors.grey;
     }
@@ -713,6 +718,8 @@ class AppTheme {
         return Icons.cancel;
       case 'ازدحام':
         return Icons.warning;
+      case 'حاجز':
+        return Icons.block;
       default:
         return Icons.help;
     }

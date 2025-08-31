@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:vibration/vibration.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:share_plus/share_plus.dart';
 import '../screens/usage_stats_screen.dart';
 import '../screens/color_settings_screen.dart';
 import '../services/cache_service.dart';
+import '../services/favorite_checkpoint_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -21,6 +24,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool soundEnabled = true;
   String notificationSound = 'default';
   bool onlyFavoritesNotifications = false;
+  int _adminTapCount = 0; // عداد للنقرات المخفية
 
   @override
   void initState() {
@@ -165,14 +169,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _testNotification() async {
-    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+    final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'test_channel',
       'Test Notifications',
       channelDescription: 'تجربة التنبيهات',
       importance: Importance.max,
       priority: Priority.high,
+      enableVibration: vibrationEnabled,
+      playSound: soundEnabled,
     );
-    const NotificationDetails platformDetails = NotificationDetails(android: androidDetails);
+    final NotificationDetails platformDetails = NotificationDetails(android: androidDetails);
 
     final FlutterLocalNotificationsPlugin notifications = FlutterLocalNotificationsPlugin();
     final messenger = ScaffoldMessenger.of(context);
@@ -200,17 +206,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _testFavoriteNotification() async {
-    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+    final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'favorite_updates',
       'Favorite Checkpoints Updates',
       channelDescription: 'تحديثات الحواجز المفضلة',
       importance: Importance.high,
       priority: Priority.high,
-      styleInformation: BigTextStyleInformation(''),
-      enableVibration: true,
-      playSound: true,
+      styleInformation: const BigTextStyleInformation(''),
+      enableVibration: vibrationEnabled,
+      playSound: soundEnabled,
     );
-    const NotificationDetails platformDetails = NotificationDetails(android: androidDetails);
+    final NotificationDetails platformDetails = NotificationDetails(android: androidDetails);
 
     final FlutterLocalNotificationsPlugin notifications = FlutterLocalNotificationsPlugin();
     final messenger = ScaffoldMessenger.of(context);
@@ -237,6 +243,118 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // Build favorite checkpoints section
+  Widget _buildFavoriteCheckpointsSection() {
+    return FutureBuilder<FavoriteCheckpointUpgradeInfo>(
+      future: FavoriteCheckpointService.getUpgradeInfo(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const SizedBox.shrink();
+        }
+
+        final info = snapshot.data!;
+        return Column(
+          children: [
+            _buildSettingTile(
+              title: 'الحواجز المفضلة المستخدمة',
+              subtitle: '${info.usedSlots} من ${info.currentSlots} حواجز',
+              icon: Icons.gps_fixed,
+              trailing: Text(
+                '${info.usedSlots}/${info.currentSlots}',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  color: Theme.of(context).primaryColor,
+                ),
+              ),
+            ),
+            if (info.canUnlockMore)
+              _buildSettingTile(
+                title: 'زيادة عدد الحواجز المفضلة',
+                subtitle: 'شاهد إعلان لإضافة ${FavoriteCheckpointService.slotsPerAd} حواجز إضافية',
+                icon: Icons.add_circle_outline,
+                trailing: const Icon(Icons.play_arrow, color: Colors.green),
+                onTap: () {
+                  FavoriteCheckpointService.showUpgradeDialog(
+                    context,
+                    onWatchAd: () => _watchAdForUpgrade(),
+                  );
+                },
+              ),
+            _buildResetInfoTile(),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildResetInfoTile() {
+    return FutureBuilder<Map<String, dynamic>>(
+      future: _getResetInfo(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const SizedBox.shrink();
+        }
+
+        final resetInfo = snapshot.data!;
+        String resetText;
+        IconData resetIcon;
+        Color resetColor;
+
+        final hoursUntilReset = resetInfo['hoursUntilReset'] as int;
+        final minutesUntilReset = resetInfo['minutesUntilReset'] as int;
+        final willResetSoon = resetInfo['willResetSoon'] as bool;
+        
+        if (hoursUntilReset <= 0 && minutesUntilReset <= 0) {
+          resetText = 'ستعود المفضلة لـ 3 حواجز قريباً';
+          resetIcon = Icons.refresh;
+          resetColor = Colors.orange;
+        } else if (willResetSoon) {
+          resetText = 'إعادة تعيين خلال ${hoursUntilReset}س ${minutesUntilReset}د';
+          resetIcon = Icons.schedule;
+          resetColor = Colors.orange;
+        } else {
+          resetText = 'إعادة تعيين خلال ${hoursUntilReset}س ${minutesUntilReset}د';
+          resetIcon = Icons.schedule;
+          resetColor = Colors.blue;
+        }
+
+        return _buildSettingTile(
+          title: 'إعادة تعيين يومية',
+          subtitle: resetText,
+          icon: resetIcon,
+          trailing: Icon(Icons.info_outline, color: resetColor),
+        );
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> _getResetInfo() async {
+    // Since FavoriteCheckpointService doesn't have getResetInfo, 
+    // we'll create a simple implementation based on daily reset
+    final prefs = await SharedPreferences.getInstance();
+    final lastReset = prefs.getInt('checkpoint_last_reset') ?? 0;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final timeDiff = now - lastReset;
+    const resetIntervalMs = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+    
+    final timeUntilReset = resetIntervalMs - timeDiff;
+    final hoursUntilReset = (timeUntilReset / (60 * 60 * 1000)).floor();
+    final minutesUntilReset = ((timeUntilReset % (60 * 60 * 1000)) / (60 * 1000)).floor();
+    
+    return {
+      'hoursUntilReset': hoursUntilReset > 0 ? hoursUntilReset : 0,
+      'minutesUntilReset': minutesUntilReset > 0 ? minutesUntilReset : 0,
+      'willResetSoon': hoursUntilReset <= 2,
+    };
+  }
+
+  Future<void> _watchAdForUpgrade() async {
+    await FavoriteCheckpointService.showRewardAdForUpgrade(context);
+    // Refresh the page to update the counters
+    setState(() {});
+  }
+
   void _showAboutDialog() {
     showDialog(
       context: context,
@@ -253,7 +371,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 textDirection: TextDirection.rtl,
               ),
               SizedBox(height: 8),
-              Text('الإصدار: 1.0.1', textDirection: TextDirection.rtl),
+              Text('الإصدار: 1.0.8', textDirection: TextDirection.rtl),
               SizedBox(height: 8),
               Text('تطبيق نمط حياة ذكي لتحسين تجربة السفر والتنقل اليومي في فلسطين.', textDirection: TextDirection.rtl),
               SizedBox(height: 16),
@@ -284,12 +402,129 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         actions: [
           TextButton(
+            onPressed: () async {
+              final url = 'https://play.google.com/store/apps/details?id=com.tariqi.roads';
+              if (await canLaunchUrl(Uri.parse(url))) {
+                await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+              }
+            },
+            child: const Text('تقييم التطبيق'),
+          ),
+          TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('إغلاق'),
           ),
         ],
       ),
     );
+  }
+
+  bool _checkAdminAccess() {
+    _adminTapCount++;
+    
+    // إذا نقر 7 مرات متتالية على "حول التطبيق"
+    if (_adminTapCount >= 7) {
+      _adminTapCount = 0; // إعادة تعيين العداد
+      _showAdminPasswordDialog();
+      return true; // منع إظهار نافذة "حول التطبيق"
+    }
+    
+    // إعادة تعيين العداد بعد 3 ثوان من عدم النقر
+    Future.delayed(const Duration(seconds: 3), () {
+      if (_adminTapCount < 7) {
+        _adminTapCount = 0;
+      }
+    });
+    
+    return false; // السماح بإظهار نافذة "حول التطبيق"
+  }
+
+  void _showAdminPasswordDialog() {
+    final TextEditingController passwordController = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('دخول لوحة الإدارة', textDirection: TextDirection.rtl),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'أدخل كلمة مرور الإدارة للوصول للوحة التحكم',
+              textDirection: TextDirection.rtl,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              textDirection: TextDirection.ltr,
+              decoration: const InputDecoration(
+                labelText: 'كلمة المرور',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.lock),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final password = passwordController.text.trim();
+              if (password == 'rafat94ahmad') { // كلمة المرور المحدثة
+                Navigator.pop(context);
+                _openAdminDashboard();
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('كلمة مرور خاطئة'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('دخول'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openAdminDashboard() async {
+    // Railway domain - admin dashboard URL
+    const String adminUrl = 'https://backendspringboot-production-46d6.up.railway.app/admin-dashboard.html';
+    
+    try {
+      final Uri url = Uri.parse(adminUrl);
+      if (await canLaunchUrl(url)) {
+        await launchUrl(
+          url,
+          mode: LaunchMode.externalApplication, // فتح في المتصفح
+        );
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('لا يمكن فتح لوحة الإدارة. تأكد من تشغيل السيرفر.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('خطأ في فتح لوحة الإدارة'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -400,6 +635,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onTap: autoRefreshEnabled ? _showRefreshIntervalDialog : null,
             ),
 
+            // قسم الحواجز المفضلة
+            _buildSectionHeader('الحواجز المفضلة'),
+            _buildFavoriteCheckpointsSection(),
+
             // قسم التخصيص
             _buildSectionHeader('التخصيص'),
             _buildSettingTile(
@@ -488,20 +727,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: 'الإصدار والمطور',
               icon: Icons.info_outline,
               trailing: const Icon(Icons.arrow_forward_ios),
-              onTap: _showAboutDialog,
+              onTap: () {
+                // فحص الوصول للإدارة أولاً، إذا كانت النقرة السابعة لا تظهر نافذة "حول التطبيق"
+                if (!_checkAdminAccess()) {
+                  _showAboutDialog();
+                }
+              },
             ),
             _buildSettingTile(
               title: 'تقييم التطبيق',
-              subtitle: 'شاركنا رأيك في المتجر',
+              subtitle: 'شاركنا رأيك في Google Play',
               icon: Icons.star_rate,
               trailing: const Icon(Icons.arrow_forward_ios),
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('شكراً لك! سيتم توجيهك للمتجر قريباً'),
-                    backgroundColor: Colors.blue,
-                  ),
-                );
+              onTap: () async {
+                final url = 'https://play.google.com/store/apps/details?id=com.tariqi.roads';
+                if (await canLaunchUrl(Uri.parse(url))) {
+                  await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('تعذر فتح متجر Google Play'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
               },
             ),
             _buildSettingTile(
@@ -510,11 +759,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               icon: Icons.share,
               trailing: const Icon(Icons.arrow_forward_ios),
               onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('سيتم إضافة خاصية المشاركة قريباً'),
-                    backgroundColor: Colors.blue,
-                  ),
+                Share.share(
+                  'جرب تطبيق أحوال الطرق - تطبيق ذكي لمتابعة حالة الطرق والحواجز في فلسطين\n\nحمل التطبيق من Google Play:\nhttps://play.google.com/store/apps/details?id=com.tariqi.roads',
+                  subject: 'تطبيق أحوال الطرق',
                 );
               },
             ),
@@ -547,7 +794,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'الإصدار 1.0.3',
+                    'الإصدار 1.0.8',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Colors.grey[500],
                     ),

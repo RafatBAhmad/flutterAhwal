@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import '../models/checkpoint.dart';
 import '../services/api_service.dart';
+import '../services/cache_service.dart';
 import '../utils/checkpoint_statistics_utils.dart';
+import '../utils/data_filter_utils.dart';
 
 class CityFilterScreen extends StatefulWidget {
   final VoidCallback? onRefreshRequested;
@@ -27,6 +29,9 @@ class _CityFilterScreenState extends State<CityFilterScreen> {
     loadCheckpoints();
   }
 
+
+
+
   // Public refresh method for main navigation
   void refreshData() {
     if (!isLoading) {
@@ -35,25 +40,6 @@ class _CityFilterScreenState extends State<CityFilterScreen> {
     }
   }
 
-  // 🔥 فلترة الحواجز التي تم تحديثها خلال يومين فقط
-  List<Checkpoint> _filterRecentCheckpoints(List<Checkpoint> checkpoints) {
-    final now = DateTime.now();
-    final twoDaysAgo = now.subtract(const Duration(days: 2));
-
-    return checkpoints.where((checkpoint) {
-      // استخدام effectiveAt أو updatedAt أيهما متوفر
-      DateTime? checkpointDate = checkpoint.effectiveAtDateTime ??
-          checkpoint.updatedAtDateTime;
-
-      if (checkpointDate == null) {
-        // إذا لم يكن هناك تاريخ، نعتبره قديم
-        return false;
-      }
-
-      // الاحتفاظ بالحواجز التي تم تحديثها خلال يومين
-      return checkpointDate.isAfter(twoDaysAgo);
-    }).toList();
-  }
 
   Future<void> loadCheckpoints() async {
     if (!mounted) return;
@@ -62,64 +48,29 @@ class _CityFilterScreenState extends State<CityFilterScreen> {
     try {
       debugPrint('🔄 CityFilter: بدء تحميل البيانات...');
 
-      List<Checkpoint> data;
-
-      try {
-        // محاولة جلب جميع الرسائل أولاً
-        data = await ApiService.getAllCheckpoints();
-        debugPrint('✅ CityFilter: getAllCheckpoints نجح - ${data.length} رسالة');
-      } catch (e) {
-        debugPrint('❌ CityFilter: getAllCheckpoints فشل: $e');
-
-        try {
-          // fallback للطريقة البديلة
-          data = await ApiService.getLatestCheckpointsOnly();
-          debugPrint('✅ CityFilter: getLatestCheckpointsOnly نجح');
-        } catch (e2) {
-          debugPrint('❌ CityFilter: getLatestCheckpointsOnly فشل: $e2');
-
-          // fallback أخير
-          data = await ApiService.fetchLatestOnly();
-          debugPrint('✅ CityFilter: fetchLatestOnly نجح');
-        }
+      // محاولة تحميل من الكاش أولاً
+      final cachedData = await CacheService.getCachedCheckpoints();
+      
+      if (cachedData != null && cachedData.isNotEmpty) {
+        // استخدام الكاش فوراً
+        _processAndDisplayData(cachedData);
+        debugPrint('📋 CityFilter: تم تحميل من الكاش (${cachedData.length} حاجز)');
+        
+        // تحديث في الخلفية
+        _backgroundRefresh();
+        return;
       }
 
-      if (!mounted) return;
-
-      // 🔥 تطبيق فلترة الحواجز الحديثة (خلال يومين فقط)
-      final recentCheckpoints = _filterRecentCheckpoints(data);
-      debugPrint(
-          '🔄 CityFilter: تم فلترة ${recentCheckpoints.length} حاجز من أصل ${data
-              .length} (خلال يومين)');
-
-      final Map<String, List<Checkpoint>> cityGroups = {};
-      for (final checkpoint in recentCheckpoints) {
-        final city = checkpoint.city == "غير معروف" ? "أخرى" : checkpoint.city;
-        cityGroups[city] = cityGroups[city] ?? [];
-        cityGroups[city]!.add(checkpoint);
+      // إذا لم يكن هناك كاش، تحميل من API
+      final data = await _fetchDataFromAPI();
+      
+      // حفظ في الكاش
+      if (data.isNotEmpty) {
+        await CacheService.cacheCheckpoints(data);
       }
 
-      // ترتيب الحواجز في كل مدينة حسب آخر تحديث
-      for (final cityCheckpoints in cityGroups.values) {
-        cityCheckpoints.sort((a, b) {
-          DateTime? dateA = a.effectiveAtDateTime ?? a.updatedAtDateTime;
-          DateTime? dateB = b.effectiveAtDateTime ?? b.updatedAtDateTime;
+      _processAndDisplayData(data);
 
-          if (dateA == null && dateB == null) return 0;
-          if (dateA == null) return 1;
-          if (dateB == null) return -1;
-
-          return dateB.compareTo(dateA); // الأحدث أولاً
-        });
-      }
-
-      setState(() {
-        allCheckpoints = recentCheckpoints;
-        checkpointsByCity = cityGroups;
-        isLoading = false;
-      });
-
-      debugPrint('✅ CityFilter: تم تحميل ${cityGroups.length} مدن بنجاح');
     } catch (e) {
       debugPrint('❌ CityFilter: خطأ في التحميل: $e');
       setState(() => isLoading = false);
@@ -140,105 +91,88 @@ class _CityFilterScreenState extends State<CityFilterScreen> {
     }
   }
 
-  void _showDiagnosticInfo(BuildContext context) {
-    final totalCheckpoints = allCheckpoints.length;
-    final citiesCount = checkpointsByCity.length;
-    final now = DateTime.now();
-    final twoDaysAgo = now.subtract(const Duration(days: 2));
+  // استخراج منطق API
+  Future<List<Checkpoint>> _fetchDataFromAPI() async {
+    try {
+      final data = await ApiService.getAllCheckpoints();
+      debugPrint('✅ CityFilter: getAllCheckpoints نجح - ${data.length} رسالة');
+      return data;
+    } catch (e) {
+      debugPrint('❌ CityFilter: getAllCheckpoints فشل: $e');
 
-    // إحصائيات إضافية
-    int recentCount = 0;
-    int oldCount = 0;
+      try {
+        final data = await ApiService.getLatestCheckpointsOnly();
+        debugPrint('✅ CityFilter: getLatestCheckpointsOnly نجح');
+        return data;
+      } catch (e2) {
+        debugPrint('❌ CityFilter: getLatestCheckpointsOnly فشل: $e2');
 
-    for (final checkpoint in allCheckpoints) {
-      DateTime? checkpointDate = checkpoint.effectiveAtDateTime ??
-          checkpoint.updatedAtDateTime;
-      if (checkpointDate != null && checkpointDate.isAfter(twoDaysAgo)) {
-        recentCount++;
-      } else {
-        oldCount++;
+        final data = await ApiService.fetchLatestOnly();
+        debugPrint('✅ CityFilter: fetchLatestOnly نجح');
+        return data;
       }
     }
-
-    showDialog(
-      context: context,
-      builder: (context) =>
-          AlertDialog(
-            title: const Text('معلومات التشخيص'),
-            content: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('📊 إجمالي الحواجز: $totalCheckpoints'),
-                  Text('🏙️ عدد المدن: $citiesCount'),
-                  Text('🕐 حديثة (خلال يومين): $recentCount'),
-                  Text('📅 قديمة (أكثر من يومين): $oldCount'),
-                  const SizedBox(height: 16),
-                  Text('⏰ آخر تحديث: ${DateTime.now().toString().substring(
-                      0, 16)}'),
-                  Text('🔄 حالة التحميل: ${isLoading
-                      ? "جاري التحميل"
-                      : "مكتمل"}'),
-                  const SizedBox(height: 16),
-                  const Text(
-                      '📝 ملاحظة: يتم عرض الحواجز التي تم تحديثها خلال يومين فقط'),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('إغلاق'),
-              ),
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  loadCheckpoints();
-                },
-                child: const Text('إعادة التحميل'),
-              ),
-              // 🔥 زر اختبار الـ API
-              TextButton(
-                onPressed: () async {
-                  Navigator.pop(context);
-                  final results = await ApiService.testAllEndpoints();
-                  if (mounted && context.mounted) {
-                    showDialog(
-                      context: context,
-                      builder: (context) =>
-                          AlertDialog(
-                            title: const Text('تشخيص API'),
-                            content: SingleChildScrollView(
-                              child: Text(
-                                'حالة: ${results['overall_status']}\n'
-                                    'تعمل: ${results['working_endpoints']}/${results['tested_endpoints']}\n'
-                                    'خادم: ${results['server']}\n\n'
-                                    'تفاصيل:\n${results['results']}',
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(context),
-                                child: const Text('إغلاق'),
-                              ),
-                            ],
-                          ),
-                    );
-                  }
-                },
-                child: const Text('اختبار API'),
-              ),
-            ],
-          ),
-    );
   }
+
+  // تحديث في الخلفية
+  Future<void> _backgroundRefresh() async {
+    try {
+      final data = await _fetchDataFromAPI();
+      
+      if (data.isNotEmpty) {
+        await CacheService.cacheCheckpoints(data);
+        _processAndDisplayData(data);
+      }
+    } catch (e) {
+      debugPrint('Background refresh failed: $e');
+    }
+  }
+
+  // معالجة وعرض البيانات
+  void _processAndDisplayData(List<Checkpoint> data) {
+    if (!mounted) return;
+
+    // 🔥 تطبيق فلترة الحواجز الحديثة (خلال يومين فقط)
+    final recentCheckpoints = DataFilterUtils.filterRecentCheckpoints(data, maxHours: 48);
+    debugPrint(
+        '🔄 CityFilter: تم فلترة ${recentCheckpoints.length} حاجز من أصل ${data
+            .length} (خلال يومين)');
+
+    final Map<String, List<Checkpoint>> cityGroups = {};
+    for (final checkpoint in recentCheckpoints) {
+      final city = checkpoint.city == "غير معروف" ? "أخرى" : checkpoint.city;
+      cityGroups[city] = cityGroups[city] ?? [];
+      cityGroups[city]!.add(checkpoint);
+    }
+
+    // ترتيب الحواجز في كل مدينة حسب آخر تحديث
+    for (final cityCheckpoints in cityGroups.values) {
+      cityCheckpoints.sort((a, b) {
+        final dateA = a.effectiveAtDateTime ?? a.updatedAtDateTime;
+        final dateB = b.effectiveAtDateTime ?? b.updatedAtDateTime;
+
+        if (dateA == null && dateB == null) return 0;
+        if (dateA == null) return 1;
+        if (dateB == null) return -1;
+
+        return dateB.compareTo(dateA); // الأحدث أولاً
+      });
+    }
+
+    setState(() {
+      allCheckpoints = recentCheckpoints;
+      checkpointsByCity = cityGroups;
+      isLoading = false;
+    });
+
+    debugPrint('✅ CityFilter: تم تحميل ${cityGroups.length} مدن بنجاح');
+  }
+
 
   Widget _buildCityCard(String cityName, CheckpointStatistics stats,
       List<Checkpoint> checkpoints) {
     // 🔥 فلترة إضافية للتأكد من أن الحواجز حديثة
-    final recentCheckpoints = _filterRecentCheckpoints(checkpoints);
+    final recentCheckpoints = DataFilterUtils.filterRecentCheckpoints(checkpoints, maxHours: 48);
 
     if (recentCheckpoints.isEmpty) {
       // لا تعرض المدينة إذا لم تكن لديها حواجز حديثة
@@ -273,13 +207,19 @@ class _CityFilterScreenState extends State<CityFilterScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          cityName,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          textDirection: TextDirection.rtl,
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                cityName,
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                textDirection: TextDirection.rtl,
+                              ),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 4),
                         Text(
@@ -687,8 +627,8 @@ class _CityFilterScreenState extends State<CityFilterScreen> {
                 itemBuilder: (context, index) {
                   final cityName = cities[index];
                   final cityCheckpoints = checkpointsByCity[cityName] ?? [];
-                  final recentCheckpoints = _filterRecentCheckpoints(
-                      cityCheckpoints);
+                  final recentCheckpoints = DataFilterUtils.filterRecentCheckpoints(
+                      cityCheckpoints, maxHours: 48);
 
                   // تخطي المدن التي لا تحتوي على حواجز حديثة
                   if (recentCheckpoints.isEmpty) {

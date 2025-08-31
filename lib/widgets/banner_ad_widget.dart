@@ -3,6 +3,7 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:flutter/foundation.dart';
 import '../services/ad_helper.dart';
 import '../services/ad_click_protection.dart';
+import '../utils/ads_config.dart';
 
 class BannerAdWidget extends StatefulWidget {
   const BannerAdWidget({super.key});
@@ -18,7 +19,12 @@ class _BannerAdWidgetState extends State<BannerAdWidget> {
   @override
   void initState() {
     super.initState();
-    _loadBannerAd();
+    // 🔥 تحقق من إعدادات الإعلانات قبل التحميل
+    if (AdsConfig.shouldShowAd(adLocation: 'banner_ad')) {
+      _loadBannerAd();
+    } else {
+      debugPrint('🚫 الإعلانات معطلة - لن يتم تحميل الإعلان البانر');
+    }
   }
 
   void _loadBannerAd() {
@@ -80,6 +86,11 @@ class _BannerAdWidgetState extends State<BannerAdWidget> {
   Widget build(BuildContext context) {
     // على الويب، لا نعرض شيء
     if (kIsWeb) {
+      return const SizedBox.shrink();
+    }
+
+    // 🔥 إذا كانت الإعلانات معطلة، لا نعرض شيء
+    if (!AdsConfig.shouldShowAd(adLocation: 'banner_ad')) {
       return const SizedBox.shrink();
     }
 

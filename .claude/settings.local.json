@@ -3,7 +3,11 @@
     "allow": [
       "Bash(grep:*)",
       "Bash(powershell:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(flutter analyze:*)",
+      "Bash(find:*)",
+      "Bash(flutter pub:*)",
+      "Bash(flutter run:*)"
     ],
     "deny": [],
     "ask": []
